@@ -120,3 +120,15 @@ describe('plain text and segment drafts', () => {
     ]);
   });
 });
+
+describe('SRT line limits (regression from a real whisper.cpp transcript)', () => {
+  it('never writes a line over maxCharsPerLine when the text is under 2 × the limit but cannot wrap into 2 lines', () => {
+    // 83 characters, yet no space splits it into two lines of ≤ 42; it used to be written with a 43-character line.
+    const sentence = makeSentence('s1', words("It's no longer good enough to just have one or two editors or outsource your content to a content agency.", 17.12, 0.25));
+    const srt = sentencesToSrt([sentence]);
+    const textLines = srt.split('\n').filter((l) => l && !/^\d+$/.test(l) && !l.includes('-->'));
+    for (const line of textLines) expect(line.length, line).toBeLessThanOrEqual(42);
+    expect(textLines.join(' ')).toBe(sentence.text);
+    expect(parseCaptions(srt).length).toBeGreaterThan(1);
+  });
+});

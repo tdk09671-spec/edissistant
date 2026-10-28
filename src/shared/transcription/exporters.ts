@@ -103,15 +103,33 @@ interface Cue {
   text: string;
 }
 
+/**
+ * True if the text wraps at spaces into at most `maxLines` lines of `maxCharsPerLine`. A plain length
+ * check isn't enough: 84 characters don't always split into two 42-character lines at a word boundary.
+ */
+function fitsLines(text: string, maxCharsPerLine: number, maxLines: number): boolean {
+  let lines = 0;
+  let current = -1;
+  for (const word of text.split(' ')) {
+    if (current >= 0 && current + 1 + word.length <= maxCharsPerLine) {
+      current += 1 + word.length;
+    } else {
+      lines++;
+      current = word.length;
+    }
+  }
+  return lines <= maxLines;
+}
+
 /** Splits a sentence into cues that fit the line limits, cutting between words using their timing. */
-function sentenceCues(sentence: TranscriptSentence, maxChars: number): Cue[] {
+function sentenceCues(sentence: TranscriptSentence, maxCharsPerLine: number, maxLines: number): Cue[] {
   const text = sentence.text.trim();
   if (!text) return [];
-  if (text.length <= maxChars || sentence.words.length < 2) return [{ start: sentence.start, end: sentence.end, text }];
+  if (fitsLines(text, maxCharsPerLine, maxLines) || sentence.words.length < 2) return [{ start: sentence.start, end: sentence.end, text }];
   const cues: Cue[] = [];
   let group: TranscriptWord[] = [];
   for (const word of sentence.words) {
-    if (group.length && joinWords([...group, word]).length > maxChars) {
+    if (group.length && !fitsLines(joinWords([...group, word]), maxCharsPerLine, maxLines)) {
       cues.push({ start: group[0].start, end: group[group.length - 1].end, text: joinWords(group) });
       group = [];
     }
@@ -129,7 +147,7 @@ export function sentencesToSrt(sentences: readonly TranscriptSentence[], options
   const maxCharsPerLine = options.maxCharsPerLine ?? 42;
   const maxLines = options.maxLines ?? 2;
   const minDuration = options.minDuration ?? 0.7;
-  const cues = [...sentences].sort((a, b) => a.start - b.start).flatMap((s) => sentenceCues(s, maxCharsPerLine * maxLines));
+  const cues = [...sentences].sort((a, b) => a.start - b.start).flatMap((s) => sentenceCues(s, maxCharsPerLine, maxLines));
 
   for (let i = 0; i < cues.length; i++) {
     const next = cues[i + 1];
