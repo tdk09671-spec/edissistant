@@ -65,3 +65,13 @@ Windows 11 Pro 10.0.26300, Node 22.14.0, Electron 45.1.0, Vitest 5.0.5, Playwrig
 ### Still not covered
 
 Export CSV/SRT through the OS save dialog, caption import through the UI, OS file pickers (source video, logo, reference files), inline header rename, search/filter/sort, split/in/out/J/K/L shortcuts, Inspector edits, Settings API key save/remove through the UI, the other settings toggles, the auto-save-off flow, keyboard-only navigation, the layout audit at multiple window sizes, `npm run dev`, packaged builds, macOS/Linux.
+
+## Animation rendering tests (2026-10-28, Linux only)
+
+Linux cloud container, Node 22.22, FFmpeg 6.1.1, Electron 45 under `xvfb-run -a`. **Not yet run on Windows.**
+
+- `npm run test:unit`: 130/130 (36 existing + 94 new in `tests/unit/animation` and `tests/unit/render`). Render tests use real FFmpeg with a synthetic frame source and are skipped when `ffmpeg`/`ffprobe` aren't on `PATH`.
+- `xvfb-run -a npx playwright test`: 27/27 (18 existing + 9 in `tests/e2e/rendering.spec.ts`, which render through the real sandboxed engine and verify outputs by decoding them with FFmpeg).
+- Fixtures: `tests/fixtures/animation/*.json` (specs only, no media).
+
+Coverage, performance numbers and the Windows/NLE/GPU checks still needed are listed in [docs/RENDERING.md](docs/RENDERING.md#test-status).

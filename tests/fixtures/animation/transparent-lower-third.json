@@ -1,0 +1,25 @@
+{
+  "specVersion": 1,
+  "id": "lower-third",
+  "start": 12.5,
+  "duration": 2,
+  "width": 640,
+  "height": 360,
+  "fps": 25,
+  "exportMode": "transparent-motion",
+  "background": { "type": "transparent" },
+  "layers": [
+    { "id": "bar", "type": "shape", "transform": { "x": 40, "y": 270 },
+      "mask": { "type": "wipe", "direction": "right", "progress": { "keyframes": [{ "t": 0, "value": 0 }, { "t": 0.5, "value": 1, "easing": "easeOutCubic" }] } },
+      "exit": { "type": "fade", "duration": 0.3 },
+      "props": { "shape": "rect", "anchor": "top-left", "width": 360, "height": 64, "radius": 10, "fill": "rgba(16, 20, 32, 0.85)" } },
+    { "id": "name", "type": "text", "start": 0.2, "transform": { "x": 64, "y": 292 },
+      "enter": { "type": "slide", "direction": "right", "duration": 0.4, "distance": 40 }, "exit": { "type": "fade", "duration": 0.3 },
+      "props": { "text": "Alex Rivera", "typography": { "fontFamily": "sans-serif", "fontWeight": 700, "fontSize": 26 }, "color": "#ffffff", "align": "left" } },
+    { "id": "role", "type": "text", "start": 0.35, "transform": { "x": 64, "y": 318 }, "opacity": 0.8,
+      "enter": { "type": "fade", "duration": 0.4 }, "exit": { "type": "fade", "duration": 0.3 },
+      "props": { "text": "Senior Colorist", "typography": { "fontFamily": "sans-serif", "fontSize": 16, "letterSpacing": 2, "textTransform": "uppercase" }, "color": "#ffd166", "align": "left" } },
+    { "id": "accent", "type": "highlight", "start": 0.3, "transform": { "x": 44, "y": 302 }, "blendMode": "screen",
+      "props": { "style": "marker", "width": 8, "height": 64, "color": "#3a6df0", "progress": 1 } }
+  ]
+}

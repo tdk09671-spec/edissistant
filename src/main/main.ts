@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, session, protocol, dialog, shell, safeStor
 import * as path from 'path';
 import * as fs from 'fs';
 import { Readable } from 'stream';
+import { registerRenderEngine } from './render';
 import { migrateLegacyFolder } from './migration';
 
 // Dev mode (Vite dev server) is opt-in via --dev so `npm start` runs the built renderer.
@@ -376,6 +377,11 @@ function registerMediaProtocol(): void {
 app.whenReady().then(async () => {
   await migratePlaintextSecrets().catch(() => undefined);
   registerMediaProtocol();
+  registerRenderEngine({
+    userDataPath: app.getPath('userData'),
+    readSettings: () => (readJsonFile(getUserDataPath(SETTINGS_FILE)) || {}) as { ffmpegPath?: string },
+    isDev,
+  });
 
   // Set CSP headers
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
