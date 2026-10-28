@@ -39,8 +39,11 @@ describe('findTool', () => {
     expect(findTool(['ffmpeg'], '', 'FF', { ...base, env: { FF: fromEnv } })).toBe(fromEnv);
     const fromSearch = touch('search', 'ffmpeg');
     expect(findTool(['ffmpeg'], undefined, 'FF', { ...base, searchDirs: [path.join(dir, 'search')] })).toBe(fromSearch);
-    const fromPath = touch('path', 'ffmpeg');
-    expect(findTool(['ffmpeg'], undefined, 'FF', { ...base, env: { PATH: `/nowhere:${path.join(dir, 'path')}` } })).toBe(fromPath);
+    // Use the host's PATH conventions: on Windows the temp folder itself contains "C:", so a ":"-joined PATH can't hold it.
+    const host = { ...base, platform: process.platform };
+    const fromPath = touch('path', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+    const PATH = [path.join(dir, 'nowhere'), path.join(dir, 'path')].join(path.delimiter);
+    expect(findTool(['ffmpeg'], undefined, 'FF', { ...host, env: { PATH } })).toBe(fromPath);
   });
 
   it('adds .exe and splits PATH on ";" on Windows', () => {
