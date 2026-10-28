@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Readable } from 'stream';
 import { migrateLegacyFolder } from './migration';
+import { registerTranscriptionIpc, TranscriptionService, type ServiceSettings } from './transcription';
 
 // Dev mode (Vite dev server) is opt-in via --dev so `npm start` runs the built renderer.
 const isDev = !app.isPackaged && process.argv.includes('--dev');
@@ -328,6 +329,15 @@ ipcMain.handle('app:info', () => ({
   videosPath: app.getPath('videos'),
   hardwareAcceleration: startupSettings.hardwareAcceleration !== false,
 }));
+
+// --- Local transcription (FFmpeg + whisper.cpp, runs entirely on this machine) ---
+
+const transcription = new TranscriptionService({
+  userDataPath: app.getPath('userData'),
+  getSettings: () => (readJsonFile(getUserDataPath(SETTINGS_FILE)) || {}) as ServiceSettings,
+});
+registerTranscriptionIpc(ipcMain, transcription);
+app.on('before-quit', () => transcription.cancelAll());
 
 // --- Local media protocol ---
 
