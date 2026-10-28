@@ -337,7 +337,16 @@ const transcription = new TranscriptionService({
   getSettings: () => (readJsonFile(getUserDataPath(SETTINGS_FILE)) || {}) as ServiceSettings,
 });
 registerTranscriptionIpc(ipcMain, transcription);
-app.on('before-quit', () => transcription.cancelAll());
+// Hold the quit until cancelled jobs have killed their processes and deleted their temp audio
+// (otherwise the WAV, ~115 MB per hour of media, is left in %TEMP%). Give up after 5 s.
+let transcriptionStopped = false;
+app.on('before-quit', (event) => {
+  if (transcriptionStopped || !transcription.hasActiveJobs) return;
+  event.preventDefault();
+  transcriptionStopped = true;
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+  void Promise.race([transcription.cancelAll(), timeout]).finally(() => app.quit());
+});
 
 // --- Local media protocol ---
 

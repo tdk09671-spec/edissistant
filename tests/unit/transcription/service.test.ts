@@ -200,6 +200,28 @@ describe.skipIf(!ffmpegPath)('TranscriptionService end to end (real FFmpeg, stan
     expect(s.getCached({ mediaPath: media })).toBeNull();
   });
 
+  it('regression: cancelAll resolves only after running jobs have deleted their temp audio (app quit)', async () => {
+    mode = 'slow';
+    const s = service();
+    let reachedEngine!: () => void;
+    const transcribing = new Promise<void>((resolve) => (reachedEngine = resolve));
+    const running = s.transcribe({ mediaPath: media }, {
+      jobId: 'quit',
+      onProgress: (p) => p.stage === 'transcribing' && p.progress > 0.3 && reachedEngine(),
+    });
+    const outcome = running.catch((error) => error);
+    await transcribing;
+    expect(s.hasActiveJobs).toBe(true);
+    expect(fs.readdirSync(path.join(root, 'tmp'))).toHaveLength(1);
+
+    await s.cancelAll();
+    // Checked right after cancelAll settles, before anything else gets a turn: this is when the app exits.
+    expect(fs.readdirSync(path.join(root, 'tmp'))).toEqual([]);
+    expect(s.hasActiveJobs).toBe(false);
+    expect(await outcome).toMatchObject({ code: 'CANCELLED' });
+    await expect(s.cancelAll()).resolves.toBeUndefined();
+  });
+
   it('refuses duplicate job ids', async () => {
     const s = service();
     const a = s.transcribe({ mediaPath: media }, { jobId: 'same' });

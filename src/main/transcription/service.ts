@@ -61,6 +61,8 @@ function defaultThreads(): number {
 export class TranscriptionService {
   private readonly cache: TranscriptCache;
   private readonly jobs = new Map<string, AbortController>();
+  /** Settles (never rejects) when each job has finished, including its temp-folder cleanup. */
+  private readonly settled = new Set<Promise<void>>();
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly config: ServiceConfig) {
@@ -141,7 +143,14 @@ export class TranscriptionService {
         return this.runJob(request, controller.signal, report).then(resolve, reject);
       });
     });
-    return run.finally(() => this.jobs.delete(jobId));
+    const tracked = run.finally(() => this.jobs.delete(jobId));
+    const done = tracked.then(
+      () => undefined,
+      () => undefined
+    );
+    this.settled.add(done);
+    void done.then(() => this.settled.delete(done));
+    return tracked;
   }
 
   cancel(jobId: string): boolean {
@@ -151,8 +160,14 @@ export class TranscriptionService {
     return true;
   }
 
-  cancelAll(): void {
+  get hasActiveJobs(): boolean {
+    return this.jobs.size > 0;
+  }
+
+  /** Cancels every job and resolves once they have stopped and cleaned up their temp folders. */
+  cancelAll(): Promise<void> {
     for (const controller of this.jobs.values()) controller.abort();
+    return Promise.all([...this.settled]).then(() => undefined);
   }
 
   /** Cached transcript for unchanged media and engine settings, if any. Never runs the engine. */
