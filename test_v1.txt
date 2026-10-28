@@ -1,0 +1,216 @@
+EDISSISTANT — TEST LOG v1
+========================================================================
+Date:          2026-10-28
+Build:         Edissistant 0.1.0 (UI/UX overhaul)
+Platform:      Windows 11 Pro (10.0.26300), Electron 45.1.0, Node 22.14.0
+Tester:        Claude (automated harness + visual review)
+Scope:         UI/UX overhaul, local data persistence, media preview,
+               secure API-key storage
+
+IMPORTANT
+This log covers automated tests and screenshot review only. No human
+hands-on testing has been done yet. Section 6 lists every feature that
+was NOT tested, so nothing here should be read as "fully tested".
+
+
+1. TEST METHOD
+------------------------------------------------------------------------
+- Static checks: TypeScript type-check (renderer + main), production build
+  (vite build + tsc).
+- Automated harness: a scratch Electron script loaded the real production
+  build (dist/main/main.js) against an ISOLATED data folder seeded with
+  sample presets/projects. It drove the UI with scripted clicks, typing and
+  key presses, and read results back from the DOM and from the JSON files
+  on disk.
+- Test media: 30 s H.264/AAC 1280x720 MP4 and a 6-cue SRT file, generated
+  with FFmpeg.
+- Legacy data: seeded one preset and one project in the pre-redesign format,
+  plus a settings.json holding a plaintext Claude API key.
+- Layout audit: run on every screen at every size. Checks for horizontal
+  overflow, clipped text in controls, controls rendered outside the window,
+  click targets under 28 px tall, and text under 11.5 px.
+- Visual review: screenshots inspected manually for design problems the
+  audit cannot detect.
+- Restart test: app closed and relaunched on the same data folder.
+- The user's real data folder (%APPDATA%\edissisant) was never used; it was
+  confirmed untouched after testing.
+
+Harness runs: 4 full runs + 1 restart run. Final run = run 4.
+
+
+2. STATIC CHECKS
+------------------------------------------------------------------------
+[PASS] TypeScript type-check, renderer (tsconfig.json)          0 errors
+[PASS] TypeScript compile, main process (tsconfig.main.json)    0 errors
+[PASS] Production build (npm run build)                          success
+[PASS] Generated CSS contains spacing/token utilities (p-6, px-8,
+       text-display, bg-danger/12, bg-surface-1/60, rounded-[18px],
+       size-1.5, Geist font-face). The CSS reset now sits inside Tailwind's
+       base layer, which fixes the original cramped-layout bug.
+       Note: the initial type-check failed (cn() typing); fixed, then PASS.
+
+
+3. FUNCTIONAL TESTS (final run)
+------------------------------------------------------------------------
+ID    Test                                              Result  Evidence
+----  ------------------------------------------------  ------  ---------------------------
+F01   Source video loads via custom media protocol      PASS    duration=30s, readyState=4,
+                                                                no media error
+F02   Seeking (HTTP range requests)                     PASS    seek to 21.5s -> 21.5s
+F03   Plaintext API key migrated to encrypted storage   PASS    secrets.bin created
+F04   Plaintext key removed from settings.json          PASS    no "sk-ant" in file
+F05   Secret status reported to UI                      PASS    encryptionAvailable=true,
+                                                                claudeApiKey=true
+F06   Add segment with keyboard shortcut "N"            PASS    6 -> 7 rows
+F07   Undo with Ctrl+Z                                  PASS    7 -> 6 rows
+F08   Wizard: empty name blocked with error message     PASS    "A preset name is required."
+F09   Wizard: invalid reference URL blocked             PASS    "Enter a full URL..." shown
+F10   Wizard: link kept after Back/Continue             PASS    "https://vimeo.com/42"
+F11   Wizard: brief kept after Back/Continue            PASS    "Harness brief text"
+F12   Wizard: save preset, return to Presets            PASS    hash=#/presets
+F13   Wizard: preset written to presets.json            PASS    name + link present on disk
+F14   New Project dialog creates project + opens it     PASS    navigated to #/projects/<id>
+F15   New project written to projects.json              PASS    present on disk
+F16   Card menu opens; Delete shows confirm dialog      PASS    screenshots captured;
+                                                                cancelled (not confirmed)
+F17   Review: add timestamped comment, saved to disk    PASS    comments 1 -> 2 in JSON
+F18   Restart: created preset still listed              PASS    presetVisible=true
+F19   Restart: created project still listed             PASS    projectVisible=true
+F20   Restart: settings.json still has no API key       PASS    file contents checked
+F21   Atomic save backups exist                         PASS    presets.json.bak,
+                                                                projects.json.bak
+F22   Legacy-format preset/project load and display     PASS    visible on Presets/Projects
+                                                                screens, no errors
+F23   Real user data folder untouched                   PASS    no json/bin files created
+
+Final run: 23 / 23 passed.
+
+
+4. LAYOUT AUDIT (final run)
+------------------------------------------------------------------------
+Screens: Dashboard, Projects, Presets, Preset wizard (step 1), Project
+         workspace (Edit), Review, Export, Settings
+Sizes:   1024x768, 1280x800, 1440x900, 1920x1080
+         (1920x1080 = full screen on this display)
+
+Result: 32 / 32 screen-size combinations with zero issues.
+
+Also screenshot-checked: wizard steps 1-4, wizard validation errors,
+New Project dialog, card dropdown menu, delete confirmation dialog.
+
+
+5. DEFECTS FOUND AND FIXED DURING TESTING
+------------------------------------------------------------------------
+D01  Keyboard shortcuts crashed when the key event did not come from an
+     on-page element ("closest is not a function"); "N" added no segment.
+     -> Fixed (Workspace, Review, ProjectEditor). Verified by F06/F07.
+D02  New Project dialog opened with no preset selected, so "Create" stayed
+     disabled. -> Now defaults to the most recent or first preset.
+     Verified by F14.
+D03  "npm start" always tried to load the dev server, so the built app
+     could never launch. -> Dev mode is now the explicit --dev flag;
+     npm start builds first.
+D04  Electron 45 warned that the synchronous safeStorage APIs are
+     deprecated. -> Switched to the async APIs. Verified by F03-F05.
+D05  Text under 11.5 px (version pill, wizard step numbers). -> Raised to
+     12 px.
+D06  Comment timecode buttons only 26 px tall. -> Now 32 px.
+D07  Dashboard at 1280x800: stats wrapped and pushed the creation cards
+     below the fold. -> Header made more compact.
+D08  Workspace: Status column cut off; In/Out fields stacked and took too
+     much height. -> Narrower table; In/Out side by side.
+D09  Player controls at 1024 px: timecode shrank to "0...".
+     -> Secondary buttons now hide first on narrow widths.
+D10  Not enough width at 1024 px. -> Sidebar collapses to an icon rail
+     below 1200 px (manual toggle too).
+D11  Projects toolbar wrapped onto two rows at 1280 px. -> Resized.
+D12  Project/preset card footers wrapped unevenly. -> Restructured.
+D13  Wizard letter-spacing control clipped ("Cus..."). -> Fields stacked.
+D14  Export output cards too narrow at 1280 px. -> Changed to a list.
+D15  "Sparkle" icon looked like a loading spinner (misleading next to an
+     unavailable AI feature). -> Redrawn; Custom category now uses a
+     palette icon.
+D16  Sequence table header "Editor instruction" wrapped to two lines.
+     -> Headers no longer wrap.
+
+Known non-defect: the harness printed router "blocker on a POP navigation"
+warnings. They appear only because the harness changed location.hash
+directly; normal in-app navigation does not cause them.
+
+
+6. NOT TESTED (needs manual testing)
+------------------------------------------------------------------------
+The following are implemented but were NOT exercised by the harness:
+
+Projects & presets
+  - Rename project (dialog and inline header rename)
+  - Duplicate project / duplicate preset
+  - Delete project / delete preset actually CONFIRMED (only the dialog was
+    opened and cancelled)
+  - Editing an existing preset, and "Customise" on a built-in template
+  - Search, status/category filters, sort, grid/list toggle
+  - Local reference files, logo picker, brand colour picker (OS dialogs)
+  - Session draft restore after leaving the wizard
+  - Unsaved-changes prompt when leaving the wizard
+
+Workspace
+  - Choosing source video through the OS file dialog (the test used a
+    pre-linked file)
+  - Caption import through the UI, including the Replace/Append dialog
+    (the parser was not tested in isolation either)
+  - Split (S), I/O in/out shortcuts, delete segment, J/K/L, frame step,
+    playback speed, mute, full screen
+  - Editing In/Out times by typing; "set to playhead" buttons
+  - Inspector edits (visual mode, instruction, transcript, status)
+  - Direction notes; Source panel relink of a missing file
+  - Dragging the viewer/sequence split
+  - Redo (Ctrl+Shift+Z / Ctrl+Y); Ctrl+S save
+
+Review
+  - Resolve/reopen/delete comments, comment filters
+  - Save version, restore version, delete version
+  - Segment strip click-to-seek; status changes from Review
+
+Export
+  - Export CSV and Export SRT (OS save dialog, output file contents)
+  - Destination folder picker / Open folder
+  - Changing format, resolution, frame rate, file name (persistence)
+
+Settings
+  - Saving/replacing/removing an API key through the UI (only migration
+    was tested)
+  - Each toggle persisting (auto-save, confirm deletes, reduce motion,
+    hardware acceleration and its restart effect)
+  - Auto-save OFF flow: Save button and the leave-without-saving prompt
+  - Local AI fields, FFmpeg path, default output folder, Open app-data
+    folder
+
+General
+  - Keyboard-only navigation and focus visibility across all screens
+  - Window controls (minimize/maximize/close), maximized-state icon
+  - Dev mode (npm run dev) after the --dev flag change
+  - Non-H.264 media (ProRes/DNxHR error message, HEVC)
+  - Large projects (hundreds of segments) / performance
+  - Packaged installer build (no packaging configured yet)
+  - Other operating systems (macOS, Linux)
+
+Not testable yet (features intentionally unavailable in this build):
+  AI suggestions, Claude connection test, local AI provider, transcription,
+  rendering ("Start render", "Regenerate"), transparent/alpha output,
+  rendered video versions. Verified only that each shows a clearly labelled
+  "not available" state.
+
+
+7. SUMMARY
+------------------------------------------------------------------------
+Static checks:          PASS
+Functional (automated): 23 / 23 PASS (final run)
+Layout audit:           32 / 32 clean (final run)
+Defects found & fixed:  16
+Open defects:           0 known
+Coverage:               Partial. Core flows covered; the items in
+                        Section 6 need manual or extended automated
+                        testing before release.
+
+Recommended next step: run through the Section 6 checklist by hand, or
+add those cases to the automated harness (v2).

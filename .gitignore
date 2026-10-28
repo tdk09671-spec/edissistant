@@ -1,0 +1,67 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+release/
+build/
+.vite/
+*.tsbuildinfo
+
+# Logs and temporary files
+*.log
+npm-debug.log*
+*.tmp
+*.temp
+*.bak
+*.swp
+coverage/
+
+# Secrets and credentials — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+secrets.bin
+credentials*.json
+
+# App user data (lives in %APPDATA%\edissistant, but guard against copies)
+presets.json
+projects.json
+settings.json
+Local State
+
+# Local media and client material — never commit
+*.mp4
+*.m4v
+*.mov
+*.mkv
+*.webm
+*.avi
+*.mxf
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.srt
+*.vtt
+*.prproj
+*.aep
+*.drp
+/media/
+/references/
+/client*/
+
+# Editor / OS / tool-local
+.claude/settings.local.json
+.vscode/*
+!.vscode/extensions.json
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store

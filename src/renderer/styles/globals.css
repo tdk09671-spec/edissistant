@@ -1,0 +1,211 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+/*
+ * Edissistant design tokens.
+ * Warm-neutral palette derived from the Ommi Media brand, inverted for a dark editing environment:
+ * charcoal surfaces, warm-white ink, and a single restrained amber "signal" accent.
+ * Spacing uses Tailwind's 4px grid (1 = 4px, 2 = 8px, 6 = 24px, 8 = 32px).
+ */
+@theme {
+  --color-canvas: #0c0d10;
+  --color-surface-1: #111216;
+  --color-surface-2: #16171c;
+  --color-surface-3: #1d1f25;
+  --color-surface-4: #262830;
+  --color-line: #24262d;
+  --color-line-strong: #353841;
+
+  --color-ink: #f3f1ea;
+  --color-ink-2: #bdbbb3;
+  --color-ink-3: #8f8e88;
+  --color-ink-4: #64645f;
+
+  --color-signal: #e9a94b;
+  --color-signal-strong: #f2bb66;
+  --color-signal-ink: #1b1308;
+  --color-signal-soft: rgb(233 169 75 / 0.12);
+
+  --color-success: #62c68e;
+  --color-warning: #e3c05a;
+  --color-danger: #ee6b5c;
+  --color-info: #86a8e3;
+
+  --color-mode-speaker: #86a8e3;
+  --color-mode-broll: #62c68e;
+  --color-mode-motion: #e9a94b;
+  --color-mode-captions: #b9a0e6;
+
+  --font-sans: 'Geist Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  --text-display: 2.75rem;
+  --text-display--line-height: 1.05;
+  --text-display--letter-spacing: -0.035em;
+  --text-title: 1.75rem;
+  --text-title--line-height: 1.15;
+  --text-title--letter-spacing: -0.025em;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+
+  --shadow-pop: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 12px 32px -8px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.3);
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.03) inset;
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --animate-fade-in: fade-in 160ms var(--ease-out-soft);
+  --animate-pop-in: pop-in 180ms var(--ease-out-soft);
+  --animate-slide-up: slide-up 220ms var(--ease-out-soft);
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes pop-in {
+    from { opacity: 0; transform: translateY(6px) scale(0.985); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+/*
+ * The base layer must stay inside @layer. An unlayered "* { padding: 0 }" reset (as in earlier builds)
+ * outranks every Tailwind utility and silently removes all padding and margins.
+ */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'ss01', 'cv11';
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: rgb(233 169 75 / 0.35);
+    color: var(--color-ink);
+  }
+
+  button,
+  [role='button'] {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  :focus {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-signal);
+    outline-offset: 2px;
+  }
+
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+
+  input[type='number']::-webkit-inner-spin-button {
+    opacity: 0.4;
+  }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(255 255 255 / 0.08);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(255 255 255 / 0.16);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+@layer components {
+  /* Wide-tracked micro label, an Ommi brand motif */
+  .eyebrow {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+
+  .timecode {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* Faint masked grid, used once behind the dashboard header */
+  .grid-bg {
+    background-image:
+      linear-gradient(to right, rgb(243 241 234 / 0.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(243 241 234 / 0.045) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse at 30% 0%, #000 20%, transparent 70%);
+  }
+}
+
+@layer utilities {
+  .titlebar-drag {
+    -webkit-app-region: drag;
+  }
+  .titlebar-no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+/* User preference: Settings → General → Reduce motion */
+html[data-reduce-motion='true'] *,
+html[data-reduce-motion='true'] *::before,
+html[data-reduce-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  transition-duration: 0.01ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
