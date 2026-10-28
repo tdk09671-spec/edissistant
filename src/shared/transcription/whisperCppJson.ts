@@ -46,7 +46,9 @@ export interface ParseWhisperOptions {
 const SPECIAL_TOKEN = /^\s*(\[_[A-Z]+_?\d*\]|<\|[^|]*\|>)\s*$/;
 // Non-speech annotations the model emits for silence/music: [BLANK_AUDIO], (music), [Applause] …
 const ANNOTATION = /^\s*[[(][^\])]*[\])]\s*$/;
-const OPENING_PUNCTUATION = /^\s*["'“‘«(\[¿¡]+$/;
+// Space-led tokens that belong to the following word: opening quotes/brackets and prefix symbols
+// such as currency (" $" + "230" → "$230").
+const OPENING_PUNCTUATION = /^\s*["'“‘«(\[¿¡$£€¥₹#@]+$/;
 
 /** whisper.cpp writes non-finite floats as bare nan/inf, which isn't JSON. */
 function sanitizeJson(raw: string): string {
@@ -119,13 +121,17 @@ function wordsFromTokens(tokens: RawToken[], segStart: number, segEnd: number, u
     const p = typeof token.p === 'number' && Number.isFinite(token.p) ? token.p : null;
     const dtw = typeof token.t_dtw === 'number' && token.t_dtw >= 0 ? token.t_dtw / 100 : null;
     const current = built[built.length - 1];
-    const startsWord = /^\s/.test(text) || !current || isNoSpaceScript(text);
+    // A pending prefix means the next token starts a new word even without a leading space.
+    const startsWord = /^\s/.test(text) || !current || prefix !== '' || isNoSpaceScript(text);
 
     if (startsWord && !hasWordCharacter(text)) {
-      // Punctuation token: an opening quote/bracket belongs to the next word, anything else to the previous one.
-      if (OPENING_PUNCTUATION.test(text) || !current) prefix += text.trim();
-      else current.text += text.trim();
-      if (current) current.end = Math.max(current.end, end);
+      // Punctuation token: an opening quote/bracket or prefix symbol belongs to the next word, anything else to the previous one.
+      if (OPENING_PUNCTUATION.test(text) || !current) {
+        prefix += text.trim();
+      } else {
+        current.text += text.trim();
+        current.end = Math.max(current.end, end);
+      }
       continue;
     }
     if (startsWord) {

@@ -88,4 +88,34 @@ describe('parseWhisperCppJson (whisper-cli -ojf)', () => {
     expect(result.words.map((w) => w.text)).toEqual(['今日', 'は。']);
     expect(groupWordsIntoSentences(result.words)[0].text).toBe('今日は。');
   });
+
+  // Token sequences recorded from whisper.cpp 1.9.5 (small.en) on Windows.
+  function segmentOf(tokens: Array<[string, number, number]>) {
+    return JSON.stringify({
+      result: { language: 'en' },
+      transcription: [
+        {
+          offsets: { from: tokens[0][1], to: tokens[tokens.length - 1][2] },
+          text: tokens.map((t) => t[0]).join(''),
+          tokens: tokens.map(([text, from, to]) => ({ text, offsets: { from, to }, p: 0.9 })),
+        },
+      ],
+    });
+  }
+
+  it('regression: a space-led currency symbol starts a new word ("paying $230,000")', () => {
+    const { words } = parseWhisperCppJson(
+      segmentOf([[' is', 390, 520], [' paying', 520, 910], [' $', 910, 970], ['230', 970, 1490], [',', 1550, 1680], ['000', 1680, 2260], [' a', 2260, 2310]])
+    );
+    expect(words.map((w) => w.text)).toEqual(['is', 'paying', '$230,000', 'a']);
+    expect(words[1]).toMatchObject({ start: 0.52, end: 0.91 });
+    expect(words[2]).toMatchObject({ start: 0.97, end: 2.26 });
+  });
+
+  it('regression: an opening quote followed by a token without a leading space starts a new word', () => {
+    const { words } = parseWhisperCppJson(segmentOf([[' He', 0, 200], [' said', 200, 500], [' "', 500, 520], ['Hello', 520, 900], ['"', 900, 920]]));
+    expect(words.map((w) => w.text)).toEqual(['He', 'said', '"Hello"']);
+    expect(words[1]).toMatchObject({ start: 0.2, end: 0.5 });
+    expect(words[2]).toMatchObject({ start: 0.52, end: 0.92 });
+  });
 });
