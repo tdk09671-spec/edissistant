@@ -56,9 +56,66 @@ export interface WhisperCppOptions {
   command: string;
   /** Arguments placed before ours (lets tests run a script through `node`). */
   prefixArgs?: string[];
+  /** Defaults to process.platform; lets tests exercise the Windows path handling anywhere. */
+  platform?: NodeJS.Platform;
 }
 
 const OUTPUT_BASENAME = 'transcript';
+const MODEL_LINK = 'model.bin';
+
+/** Working folder and path arguments for one whisper-cli run. */
+export interface EngineFiles {
+  cwd: string;
+  model: string;
+  audio: string;
+  output: string;
+}
+
+// whisper-cli reads argv in the Windows ANSI code page, so any non-ASCII path argument is mangled:
+// whisper.cpp 1.9.5 can't find "日本" paths and crashes (0xC0000409) on "è". Printable ASCII is always safe.
+const isAsciiPath = (p: string) => /^[\x20-\x7e]*$/.test(p);
+
+/** Our own audio and output are passed as names relative to the work folder, which is the cwd. */
+function directFiles(input: EngineInput): EngineFiles {
+  return { cwd: input.workDir, model: input.modelPath, audio: path.basename(input.audioPath), output: OUTPUT_BASENAME };
+}
+
+/**
+ * Chooses path arguments whisper-cli can open. On Windows, a model path with non-ASCII characters
+ * (e.g. under C:\Users\José) is reached by running in the model's folder and passing its file name,
+ * with the audio and output relative to that folder ("..\..\Local\Temp\…" climbs out of the Unicode
+ * part). If that path still isn't ASCII (non-ASCII file name, or a Unicode work folder on another
+ * drive), a temporary hard link in the work folder is used; the model file itself is never moved,
+ * copied or renamed. If no link can be made, throws MODEL_NOT_FOUND with a fix instead of letting
+ * whisper-cli crash.
+ */
+export function resolveEngineFiles(input: EngineInput, platform: NodeJS.Platform = process.platform): EngineFiles {
+  const direct = directFiles(input);
+  if (platform !== 'win32' || isAsciiPath(input.modelPath)) return direct;
+
+  const p = path.win32;
+  const modelDir = p.dirname(input.modelPath);
+  const modelFile = p.basename(input.modelPath);
+  const toWork = p.relative(modelDir, input.workDir);
+  if (isAsciiPath(modelFile) && isAsciiPath(toWork)) {
+    return { cwd: modelDir, model: modelFile, audio: p.join(toWork, direct.audio), output: p.join(toWork, OUTPUT_BASENAME) };
+  }
+
+  const link = path.join(input.workDir, MODEL_LINK);
+  try {
+    fs.rmSync(link, { force: true });
+    fs.linkSync(input.modelPath, link);
+    return { ...direct, model: MODEL_LINK };
+  } catch (error) {
+    throw new TranscriptionError(
+      'MODEL_NOT_FOUND',
+      `whisper.cpp can't open the model "${input.modelPath}" because its path contains characters outside A–Z, 0–9 and ` +
+        'basic symbols, and it is on a different drive from the temporary folder. Move the model to a folder with a plain ' +
+        'path (for example C:\\Whisper\\models) and set "modelsDirectory" in settings, or rename the model file to plain characters.',
+      String(error)
+    );
+  }
+}
 
 /** Errors that a CPU retry can't fix, so 'auto' mode reports them instead of falling back. */
 const NOT_DEVICE_RELATED = /unknown argument|model file not found|input file not found|failed to read audio|unknown language|unknown DTW preset/i;
@@ -80,11 +137,13 @@ export class WhisperCppEngine implements TranscriptionEngine {
   readonly name = 'whisper.cpp';
   private readonly command: string;
   private readonly prefixArgs: string[];
+  private readonly platform: NodeJS.Platform;
   private cachedVersion?: Promise<string | undefined>;
 
   constructor(options: WhisperCppOptions) {
     this.command = options.command;
     this.prefixArgs = options.prefixArgs ?? [];
+    this.platform = options.platform ?? process.platform;
   }
 
   version(): Promise<string | undefined> {
@@ -94,17 +153,16 @@ export class WhisperCppEngine implements TranscriptionEngine {
     return this.cachedVersion;
   }
 
-  buildArgs(input: EngineInput, useGpu: boolean): string[] {
+  buildArgs(input: EngineInput, useGpu: boolean, files: EngineFiles = directFiles(input)): string[] {
     const args = [
       ...this.prefixArgs,
+      // Paths relative to files.cwd where possible, so they stay ASCII-safe (see resolveEngineFiles).
       '-m',
-      input.modelPath,
-      // Relative names inside the work folder: whisper-cli reads argv in the Windows ANSI code page,
-      // so this keeps our own paths ASCII-safe regardless of the user's temp folder name.
+      files.model,
       '-f',
-      path.basename(input.audioPath),
+      files.audio,
       '-of',
-      OUTPUT_BASENAME,
+      files.output,
       '-ojf',
       '-pp',
       '-l',
@@ -120,13 +178,13 @@ export class WhisperCppEngine implements TranscriptionEngine {
     return args;
   }
 
-  private async run(input: EngineInput, useGpu: boolean, context: EngineContext): Promise<RunResult & { log: string }> {
+  private async run(input: EngineInput, files: EngineFiles, useGpu: boolean, context: EngineContext): Promise<RunResult & { log: string }> {
     const log: string[] = [];
     const outFile = path.join(input.workDir, `${OUTPUT_BASENAME}.json`);
     fs.rmSync(outFile, { force: true });
     try {
-      const result = await runProcess(this.command, this.buildArgs(input, useGpu), {
-        cwd: input.workDir,
+      const result = await runProcess(this.command, this.buildArgs(input, useGpu, files), {
+        cwd: files.cwd,
         signal: context.signal,
         onStderrLine: (line) => {
           if (log.length < 400) log.push(line);
@@ -143,16 +201,14 @@ export class WhisperCppEngine implements TranscriptionEngine {
 
   async transcribe(input: EngineInput, context: EngineContext): Promise<EngineOutput> {
     const warnings: string[] = [];
-    if (process.platform === 'win32' && /[^\x00-\x7f]/.test(input.modelPath)) {
-      warnings.push('The model path contains non-ASCII characters, which some whisper.cpp builds cannot open on Windows.');
-    }
     if (input.dtwAlignment && !dtwPreset(input.modelName)) {
       warnings.push(`DTW alignment isn't available for model "${input.modelName}"; used standard token timing.`);
     }
+    const files = resolveEngineFiles(input, this.platform);
 
     let useGpu = input.device !== 'cpu';
     let cpuFallback = false;
-    let result = await this.run(input, useGpu, context);
+    let result = await this.run(input, files, useGpu, context);
 
     if (result.code !== 0 && input.device === 'auto' && !NOT_DEVICE_RELATED.test(result.stderrTail)) {
       // GPU builds can fail at init (missing driver/runtime, out of VRAM). Retry once on the CPU.
@@ -160,7 +216,7 @@ export class WhisperCppEngine implements TranscriptionEngine {
       useGpu = false;
       warnings.push('GPU transcription failed, so it was retried on the CPU.');
       context.onProgress?.(0);
-      result = await this.run(input, false, context);
+      result = await this.run(input, files, false, context);
     }
 
     if (result.code !== 0) {

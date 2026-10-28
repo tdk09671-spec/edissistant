@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { parseWhisperDevice, parseWhisperProgress, WhisperCppEngine, type EngineInput } from '../../../src/main/transcription/whisperCpp';
+import { parseWhisperDevice, parseWhisperProgress, resolveEngineFiles, WhisperCppEngine, type EngineInput } from '../../../src/main/transcription/whisperCpp';
 import { TranscriptionError } from '../../../src/shared/transcription';
 import { copyFixture, fakeWhisper, tempDir } from './helpers';
 
@@ -127,5 +127,77 @@ describe('WhisperCppEngine with a stand-in whisper-cli', () => {
     await expect(run).rejects.toMatchObject({ code: 'CANCELLED' });
     // The slow stand-in needs ~1.5 s to finish; cancelling must not wait for it.
     expect(Date.now() - started).toBeLessThan(1200);
+  });
+});
+
+// whisper-cli reads argv in the Windows ANSI code page: whisper.cpp 1.9.5 crashed on a model in
+// "modèles" and couldn't find one under "日本", so a user name like "Zoë José 日本" broke the default setup.
+describe('Unicode model paths on Windows', () => {
+  let user: string;
+  let models: string;
+  let work: string;
+  let unicodeInput: EngineInput;
+  beforeEach(() => {
+    user = path.join(dir, 'Zoë José 日本');
+    models = path.join(user, 'AppData', 'Roaming', 'edissistant', 'modèles');
+    work = path.join(user, 'AppData', 'Local', 'Temp', 'edissistant-transcribe-x');
+    fs.mkdirSync(models, { recursive: true });
+    fs.mkdirSync(work, { recursive: true });
+    fs.writeFileSync(path.join(models, 'ggml-base.en.bin'), 'fake model');
+    unicodeInput = { ...input, workDir: work, audioPath: copyFixture('tone.wav', work, 'audio.wav'), modelPath: path.join(models, 'ggml-base.en.bin') };
+  });
+
+  const ascii = (s: string) => /^[\x20-\x7e]*$/.test(s);
+
+  it('passes ASCII model paths unchanged, and leaves other platforms alone', () => {
+    expect(resolveEngineFiles(input, 'win32')).toEqual({ cwd: dir, model: input.modelPath, audio: 'audio.wav', output: 'transcript' });
+    expect(resolveEngineFiles(unicodeInput, 'linux')).toMatchObject({ cwd: work, model: unicodeInput.modelPath });
+  });
+
+  it('runs in the model folder with only ASCII path arguments that point at the right files', () => {
+    const files = resolveEngineFiles(unicodeInput, 'win32');
+    expect(files.cwd).toBe(models);
+    expect(files.model).toBe('ggml-base.en.bin');
+    for (const arg of [files.model, files.audio, files.output]) expect(ascii(arg), arg).toBe(true);
+    if (process.platform === 'win32') {
+      expect(path.resolve(files.cwd, files.audio)).toBe(unicodeInput.audioPath);
+      expect(path.resolve(files.cwd, files.output)).toBe(path.join(work, 'transcript'));
+    }
+    // Nothing was created next to the user's model.
+    expect(fs.readdirSync(models)).toEqual(['ggml-base.en.bin']);
+  });
+
+  it('uses a temporary hard link when the model file name itself is not ASCII, without touching the original', () => {
+    const original = path.join(models, 'ggml-baseé.bin');
+    fs.renameSync(unicodeInput.modelPath, original);
+    const files = resolveEngineFiles({ ...unicodeInput, modelPath: original }, 'win32');
+    expect(files).toMatchObject({ cwd: work, model: 'model.bin', audio: 'audio.wav' });
+    const link = path.join(work, 'model.bin');
+    expect(fs.readFileSync(link, 'utf8')).toBe('fake model');
+    expect(fs.statSync(link).ino).toBe(fs.statSync(original).ino);
+    // Deleting the work folder (as the service does) leaves the model in place.
+    fs.rmSync(work, { recursive: true, force: true });
+    expect(fs.readFileSync(original, 'utf8')).toBe('fake model');
+  });
+
+  it('gives an actionable MODEL_NOT_FOUND instead of a crash when no ASCII path or link is possible', () => {
+    // A link can't be made (here: no source file; in practice: a different drive or a FAT/exFAT drive).
+    const unreachable = { ...unicodeInput, modelPath: path.join(models, 'ggml-日本.bin') };
+    expect(() => resolveEngineFiles(unreachable, 'win32')).toThrow(TranscriptionError);
+    try {
+      resolveEngineFiles(unreachable, 'win32');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'MODEL_NOT_FOUND' });
+      expect((error as Error).message).toMatch(/modelsDirectory/);
+    }
+  });
+
+  it.skipIf(process.platform !== 'win32')('transcribes end to end with the model and work folder under a Unicode user folder', async () => {
+    const record = path.join(dir, 'runs.jsonl');
+    const out = await engine('normal', record).transcribe({ ...unicodeInput, device: 'cpu' }, {});
+    expect(out.words.length).toBeGreaterThan(0);
+    const args = recorded(record).find((a) => a.includes('-m'))!;
+    for (const flag of ['-m', '-f', '-of']) expect(ascii(args[args.indexOf(flag) + 1])).toBe(true);
+    expect(fs.readdirSync(models)).toEqual(['ggml-base.en.bin']);
   });
 });
