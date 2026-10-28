@@ -28,6 +28,7 @@ Windows 11 Pro 10.0.26300, Node 22.14.0, Electron 45.1.0, Vitest 5.0.5, Playwrig
 | `time.test.ts` | Timecode/clock/precise formatting, `parseTime` (seconds, M:SS, H:MM:SS, timecode, invalid) |
 | `captions.test.ts` | SRT fixture, WebVTT (BOM, CRLF, cue settings, tags), plain transcript, empty VTT, SRT and CSV export with escaping |
 | `project.test.ts` | Segment clamping, sorting, playhead lookup, media URLs from Windows paths, file names, export defaults |
+| `migration.test.ts` | **Regression:** legacy folder migration (`src/main/migration.ts`): `Local State` alone doesn't block it, empty/missing folders, existing data never overwritten, deleted items not restored, backups and secrets preserved. Verified to fail with the old `Local State` check. |
 | `dataProvider.test.tsx` | **Regression:** a save requested before the initial load must not overwrite stored data. Verified to fail without the fix. |
 
 ### End-to-end (17)
@@ -49,7 +50,8 @@ Windows 11 Pro 10.0.26300, Node 22.14.0, Electron 45.1.0, Vitest 5.0.5, Playwrig
 | Recovery | Valid empty file is trusted; `.bak` is not auto-loaded (documents current behaviour) | — |
 | Migration | Legacy `edissisant` folder moved when no current data | — |
 | Migration | Existing current data wins; legacy left untouched | — |
-| Migration | `Local State` alone blocks migration (documents current behaviour; this stranded real data) | — |
+| Migration | **Regression:** `Local State` alone no longer blocks migration; legacy `.bak` files carried over | — |
+| Migration | Deleted presets/projects are not restored from the legacy folder | — |
 | Secrets | Plaintext API key moved to `secrets.bin`, removed from `settings.json` | F03–F05, F20 |
 
 ### Defect fixed in this round
@@ -58,7 +60,6 @@ Windows 11 Pro 10.0.26300, Node 22.14.0, Electron 45.1.0, Vitest 5.0.5, Playwrig
 
 ### Known behaviours, documented and not changed
 
-- The legacy-folder migration is skipped when the new folder holds only Chromium files (`Local State`). That is how real data was stranded in `%APPDATA%\edissisant`.
 - `.bak` is only used when the main file can't be parsed. A deliberately emptied list is trusted.
 
 ### Still not covered

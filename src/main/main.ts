@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, session, protocol, dialog, shell, safeStor
 import * as path from 'path';
 import * as fs from 'fs';
 import { Readable } from 'stream';
+import { migrateLegacyFolder } from './migration';
 
 // Dev mode (Vite dev server) is opt-in via --dev so `npm start` runs the built renderer.
 const isDev = !app.isPackaged && process.argv.includes('--dev');
@@ -32,14 +33,8 @@ protocol.registerSchemesAsPrivileged([
 // The app was first released under the misspelled name "edissisant"; carry its data folder over once.
 function migrateLegacyUserData(): void {
   const legacy = path.join(app.getPath('appData'), 'edissisant');
-  const current = app.getPath('userData');
-  if (!fs.existsSync(legacy)) return;
-  // Electron may create an empty userData folder before this runs, so only treat it as in use if it holds our data.
-  const appFiles = ['projects.json', 'presets.json', 'Local State'];
-  if (appFiles.some((file) => fs.existsSync(path.join(current, file)))) return;
   try {
-    fs.rmSync(current, { recursive: true, force: true });
-    fs.renameSync(legacy, current);
+    migrateLegacyFolder(legacy, app.getPath('userData'));
   } catch {
     // Folder is locked (e.g. another instance is running) — keep using it rather than start empty.
     app.setPath('userData', legacy);

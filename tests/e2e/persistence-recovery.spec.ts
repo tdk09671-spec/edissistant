@@ -111,15 +111,34 @@ test.describe('data migration', () => {
     await close(app);
   });
 
-  test('current folder holding only Chromium files ("Local State") blocks the migration', async ({}, testInfo) => {
-    // Documents current behaviour — this is how the real legacy data ended up stranded.
+  test('regression: "Local State" alone in the current folder does not block the migration', async ({}, testInfo) => {
+    // This is how real legacy data was stranded in %APPDATA%\edissisant.
     const appData = freshAppData(testInfo);
     const legacy = legacyDataDir(appData);
     writeData(legacy, 'projects.json', [makeProject({ name: 'Stranded Legacy Project' })]);
+    writeData(legacy, 'projects.json.bak', [makeProject({ name: 'Older Legacy Project' })]);
     writeData(userDataDir(appData), 'Local State', '{}');
     const app = await launch(appData);
     await go(app.page, '#/projects');
-    await expect(app.page.getByText('Stranded Legacy Project')).toHaveCount(0);
+    await expect(app.page.getByText('Stranded Legacy Project').first()).toBeVisible();
+    expect(fs.existsSync(legacy)).toBe(false);
+    expect(readData<Project[]>(userDataDir(appData), 'projects.json.bak')?.[0].name).toBe('Older Legacy Project');
+    await close(app);
+  });
+
+  test('deleted presets and projects are not restored from the legacy folder', async ({}, testInfo) => {
+    const appData = freshAppData(testInfo);
+    const legacy = legacyDataDir(appData);
+    writeData(legacy, 'presets.json', [makePreset({ name: 'Deleted Test Preset' })]);
+    writeData(legacy, 'projects.json', [makeProject({ name: 'Deleted Test Project' })]);
+    writeData(userDataDir(appData), 'presets.json', []);
+    writeData(userDataDir(appData), 'projects.json', []);
+    writeData(userDataDir(appData), 'Local State', '{}');
+    const app = await launch(appData);
+    await go(app.page, '#/projects');
+    await expect(app.page.getByText('Deleted Test Project')).toHaveCount(0);
+    await go(app.page, '#/presets');
+    await expect(app.page.getByText('Deleted Test Preset')).toHaveCount(0);
     expect(readData<Project[]>(legacy, 'projects.json')).toHaveLength(1);
     await close(app);
   });
