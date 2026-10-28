@@ -121,10 +121,11 @@ describe('plain text and segment drafts', () => {
   });
 });
 
-describe('SRT line limits (regression from a real whisper.cpp transcript)', () => {
+describe('SRT line limits (regression found on a real whisper.cpp transcript)', () => {
   it('never writes a line over maxCharsPerLine when the text is under 2 × the limit but cannot wrap into 2 lines', () => {
-    // 83 characters, yet no space splits it into two lines of ≤ 42; it used to be written with a 43-character line.
-    const sentence = makeSentence('s1', words("It's no longer good enough to just have one or two editors or outsource your content to a content agency.", 17.12, 0.25));
+    // Synthetic sentence with the same shape as the real one: a cue of ≤ 84 characters that no space splits into two
+    // lines of ≤ 42, so it used to be written with a 43-character line.
+    const sentence = makeSentence('s1', words("It's no longer fast enough to just send one or two proxies or upload your footage to a shared review folder.", 17.12, 0.25));
     const srt = sentencesToSrt([sentence]);
     const textLines = srt.split('\n').filter((l) => l && !/^\d+$/.test(l) && !l.includes('-->'));
     for (const line of textLines) expect(line.length, line).toBeLessThanOrEqual(42);

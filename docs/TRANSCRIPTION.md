@@ -166,7 +166,9 @@ Pure, immutable helpers in `src/shared/transcription/sentences.ts`:
 - `groupWordsIntoSentences(words, options)` re-groups at any time.
 
 Grouping breaks after `. ! ? …` (and CJK `。！？`), except after common abbreviations (`Dr.`, `Mr.`, `e.g.` …), at pauses
-≥ `pauseThreshold`, and splits sentences over `maxDuration`/`maxChars` at the last comma where possible.
+≥ `pauseThreshold`. Sentences over `maxDuration`/`maxChars` are then split knowing the whole sentence: at a comma or
+other clause break with at least three words on each side, otherwise into even parts (preferring the longest pause
+between equally good points), so no one-word fragments are left. Words and their timing are never changed.
 
 ### SRT export
 
@@ -191,17 +193,25 @@ into following silence but never overlap the next cue. The output parses with th
   `cpuFallback: true` with a warning.
 - `engine.device` comes from whisper.cpp's own log (`whisper_backend_init_gpu: using CUDA0 backend` → `gpu`;
   `no GPU found` or `-ng` → `cpu`; otherwise `unknown`). We don't guess.
-- **None of the GPU paths have been run on real hardware.** They are covered only by the stand-in engine, which
-  prints the same log lines.
+- GPU transcription and device detection (`CUDA0`) were verified on Windows with the whisper.cpp 1.9.5 CUDA 12.4 build
+  on an RTX 3070. **The GPU → CPU fallback has not been triggered on real hardware**; it's covered only by the
+  stand-in engine, which prints the same log lines.
 
 ## Windows notes
 
 - Processes are spawned with `windowsHide: true` and without a shell, so paths with spaces, `&` or quotes are safe.
-- whisper-cli reads its arguments in the Windows ANSI code page. The engine runs in its temp folder and passes the WAV
-  and output as short relative ASCII names. The **model path** is still absolute: if it has characters outside the
-  system code page (e.g. an unusual user name), loading may fail, so keep models in an ASCII path (set
-  `modelsDirectory`). A warning is added when the model path is non-ASCII.
-- Cancelling uses `ChildProcess.kill()` (TerminateProcess on Windows). Closing the window or quitting the app cancels running jobs.
+- whisper-cli reads its arguments in the Windows ANSI code page, so any non-ASCII path argument is mangled (whisper.cpp
+  1.9.5 crashes on `C:\…\modèles\…` and can't find `…\日本\…`). The engine therefore only passes ASCII paths:
+  - normally it runs in its temp folder and passes the WAV and output as short relative names, and an ASCII model path as is;
+  - if the model path isn't ASCII (e.g. under `C:\Users\José`), it runs in the model's folder, passes the model's file
+    name, and reaches the WAV/output by a relative path (`..\..\Local\Temp\…` climbs out of the Unicode part);
+  - if that still isn't ASCII (a non-ASCII model file name, or a Unicode temp folder on another drive), it uses a
+    temporary hard link with an ASCII name in the temp folder. The model file itself is never moved, copied or renamed;
+  - if no hard link can be made (different drive, FAT/exFAT), it fails with `MODEL_NOT_FOUND` and says how to fix it.
+  whisper-cli itself, FFmpeg and media files work from Unicode folders. Tested on Windows 11 with whisper.cpp 1.9.5
+  (CPU and CUDA builds) under a simulated `Zoë José 日本` user folder.
+- Cancelling uses `ChildProcess.kill()` (TerminateProcess on Windows). Closing the window or quitting the app cancels
+  running jobs, and quitting waits (up to 5 s) for them to delete their temp audio.
 - Extraction writes a temporary 16 kHz WAV (~115 MB per hour of media) in `%TEMP%`; it's deleted when the job ends.
 
 ## What was tested
@@ -227,7 +237,7 @@ checked against the whisper.cpp source (`examples/cli/cli.cpp`), **not against a
    waveform, speed (real-time factor) for base/small/large-v3-turbo.
 2. The flag set (`-ojf -pp -l -t -ng -of -f`, optional `-dtw`) on the exact whisper.cpp release you ship.
 3. A CUDA (or Vulkan) build on an NVIDIA GPU: device detection, speed, and the fallback when the driver is missing.
-4. Non-ASCII user names / media paths on Windows, network drives, and very long files (2 h+).
+4. A real (not simulated) non-ASCII Windows user account, network drives, and very long files (2 h+).
 5. Cancel/quit while transcribing on Windows (no orphaned `whisper-cli.exe` or `ffmpeg.exe`).
 6. macOS: Homebrew `whisper-cli` discovery from a Finder-launched app, Metal device detection.
 7. Running `tests/e2e/transcription.spec.ts` on Windows: it is skipped there because the stand-in engine is a Node
