@@ -58,6 +58,55 @@ describe('groupWordsIntoSentences', () => {
   });
 });
 
+describe('groupWordsIntoSentences: long sentences (regressions found on a real whisper.cpp transcript)', () => {
+  // Synthetic sentence with the same shape as the real one: just over 160 characters, under 8 s, one early comma.
+  // It used to end in a one-word "network." sentence.
+  const real =
+    "That is not your usual freelance rate, that's a senior level hire because they know that the host is the single most valuable growth channel for the entire network.";
+
+  it('does not leave a one-word fragment at the end of a long sentence', () => {
+    const words = timed(real, 5.87, 0.02, 0.24);
+    const sentences = groupWordsIntoSentences(words);
+    expect(sentences.map((s) => s.text)).toEqual([
+      'That is not your usual freelance rate,',
+      "that's a senior level hire because they know that the host is the single most valuable growth channel for the entire network.",
+    ]);
+  });
+
+  it('keeps every word object and timestamp unchanged and in order', () => {
+    const words = timed(`${real} ${real}`, 0, 0.02, 0.24);
+    for (const options of [{}, { maxChars: 42 }, { maxChars: 30, maxDuration: 2 }]) {
+      const sentences = groupWordsIntoSentences(words, options);
+      expect(sentences.flatMap((s) => s.words)).toEqual(words);
+      sentences.forEach((s) => expect(s).toMatchObject({ start: s.words[0].start, end: s.words[s.words.length - 1].end }));
+    }
+  });
+
+  it('splits a long sentence with no comma into even parts, never a single trailing word', () => {
+    const words = timed('one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen');
+    const sentences = groupWordsIntoSentences(words, { maxChars: 60 });
+    expect(sentences.length).toBe(2);
+    expect(sentences.every((s) => s.text.length <= 60 && s.words.length >= 6)).toBe(true);
+  });
+
+  it('prefers the longest pause between equally good cut points', () => {
+    // After "cccc" and after "dddd" are both close to an even split of 34 characters.
+    const text = 'aaaa bbbb cccc dddd eeee ffff gggg';
+    expect(groupWordsIntoSentences(timed(text), { maxChars: 30 }).map((s) => s.text)).toEqual(['aaaa bbbb cccc dddd', 'eeee ffff gggg']);
+    const words = timed(text);
+    // A 0.5 s breath after "cccc" (still below the 0.8 s sentence-break pause).
+    words.slice(3).forEach((w) => Object.assign(w, { start: w.start + 0.5, end: w.end + 0.5 }));
+    expect(groupWordsIntoSentences(words, { maxChars: 30 }).map((s) => s.text)).toEqual(['aaaa bbbb cccc', 'dddd eeee ffff gggg']);
+  });
+
+  it('ignores a comma that would leave fewer than three words on one side', () => {
+    const words = timed('So yes, we cut the interview down to the strongest three minutes and then graded it');
+    const sentences = groupWordsIntoSentences(words, { maxChars: 50 });
+    expect(sentences[0].text).not.toBe('So yes,');
+    expect(sentences.every((s) => s.words.length >= 2 && s.text.length <= 50)).toBe(true);
+  });
+});
+
 describe('editSentenceText', () => {
   const sentence = makeSentence('s1', [
     { text: 'We', start: 1, end: 1.2, confidence: 0.9 },

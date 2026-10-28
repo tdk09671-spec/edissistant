@@ -32,51 +32,66 @@ export function makeSentence(id: string, words: TranscriptWord[], extra: Partial
 }
 
 /**
- * Groups timed words into sentences. A new sentence starts after terminal punctuation, at a
- * pause of at least `pauseThreshold`, or when the current one would exceed `maxDuration` /
- * `maxChars` (split at the last comma when there is one, so captions break at natural points).
+ * Groups timed words into sentences. A new sentence starts after terminal punctuation or at a
+ * pause of at least `pauseThreshold`. Sentences over `maxDuration` / `maxChars` are then split
+ * (see splitOverlong), so captions break at natural points without leaving one-word fragments.
+ * Words and their timing are never changed, only grouped.
  */
 export function groupWordsIntoSentences(words: readonly TranscriptWord[], options: SentenceGroupingOptions = {}): TranscriptSentence[] {
   const opts = { ...DEFAULT_GROUPING, ...options };
-  const groups: TranscriptWord[][] = [];
+  const natural: TranscriptWord[][] = [];
   let current: TranscriptWord[] = [];
-
-  const overflows = (group: TranscriptWord[], next: TranscriptWord) =>
-    group.length > 0 &&
-    (next.end - group[0].start > opts.maxDuration || joinWords(group).length + 1 + next.text.length > opts.maxChars);
 
   for (const word of words) {
     const prev = current[current.length - 1];
     if (prev && word.start - prev.end >= opts.pauseThreshold) {
-      groups.push(current);
+      natural.push(current);
       current = [];
-    }
-    while (overflows(current, word)) {
-      // Split at the last clause boundary, but not one so early that it leaves a tiny fragment.
-      let cut = -1;
-      for (let k = current.length - 1; k >= Math.floor(current.length / 3); k--) {
-        if (endsClause(current[k].text)) {
-          cut = k;
-          break;
-        }
-      }
-      if (cut === -1) {
-        groups.push(current);
-        current = [];
-      } else {
-        groups.push(current.slice(0, cut + 1));
-        current = current.slice(cut + 1);
-      }
     }
     current.push(word);
     if (endsSentence(word.text)) {
-      groups.push(current);
+      natural.push(current);
       current = [];
     }
   }
-  if (current.length) groups.push(current);
+  if (current.length) natural.push(current);
 
-  return groups.map((group, i) => makeSentence(`s${i + 1}`, group));
+  return natural.flatMap((group) => splitOverlong(group, opts)).map((group, i) => makeSentence(`s${i + 1}`, group));
+}
+
+/**
+ * Splits a sentence that's over the limits, knowing the whole sentence (cutting as words arrive left
+ * one-word tails such as "company."). Prefers a clause break (comma, semicolon…) with at least three
+ * words on each side; otherwise cuts nearest to an even split, preferring the longest pause between
+ * equally good points. Recurses until every part fits or is a single word.
+ */
+function splitOverlong(group: TranscriptWord[], opts: Required<SentenceGroupingOptions>): TranscriptWord[][] {
+  const n = group.length;
+  const chars = joinWords(group).length;
+  const duration = group[n - 1].end - group[0].start;
+  if (n < 2 || (chars <= opts.maxChars && duration <= opts.maxDuration)) return [group];
+
+  // Measure along whichever limit is exceeded more, and aim for the fewest even parts.
+  const byChars = chars / opts.maxChars >= duration / opts.maxDuration;
+  const parts = Math.max(2, Math.ceil(byChars ? chars / opts.maxChars : duration / opts.maxDuration));
+  let prefix = 0;
+  const position = group.map((word) => {
+    prefix += (prefix ? 1 : 0) + word.text.length;
+    return byChars ? prefix / chars : duration > 0 ? (word.end - group[0].start) / duration : 0;
+  });
+  // Distance from the end of word k to the nearest ideal cut (1/parts, 2/parts, …).
+  const offTarget = (k: number) => Math.min(...Array.from({ length: parts - 1 }, (_, j) => Math.abs(position[k] - (j + 1) / parts)));
+  const gapAfter = (k: number) => group[k + 1].start - group[k].end;
+
+  const pick = (candidates: number[]) => {
+    const best = Math.min(...candidates.map(offTarget));
+    return candidates.filter((k) => offTarget(k) <= best + 0.05).reduce((a, b) => (gapAfter(b) > gapAfter(a) ? b : a));
+  };
+  const range = (minSide: number) => Array.from({ length: Math.max(0, n - 2 * minSide + 1) }, (_, i) => i + minSide - 1);
+
+  const clauses = range(3).filter((k) => endsClause(group[k].text));
+  const cut = clauses.length ? pick(clauses) : pick(range(n >= 4 ? 2 : 1));
+  return [...splitOverlong(group.slice(0, cut + 1), opts), ...splitOverlong(group.slice(cut + 1), opts)];
 }
 
 export function flattenWords(sentences: readonly TranscriptSentence[]): TranscriptWord[] {
