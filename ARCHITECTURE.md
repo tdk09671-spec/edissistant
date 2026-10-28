@@ -67,8 +67,8 @@ The type contract lives in `src/renderer/types/index.ts` (`ElectronAPI`). When y
 
 These areas have low overlap with each other, so separate branches are unlikely to conflict:
 
-1. **Automated test harness**: commit a Playwright-for-Electron or scripted-Electron suite plus `npm test`, using an isolated `userData`. *New files only.*
-2. **Pure library unit tests**: `lib/captions.ts`, `lib/time.ts`, `lib/project.ts` (e.g. Vitest). *New files only.*
+1. **More end-to-end coverage** (`tests/e2e`): extend toward the gaps listed in TESTING.md. *New spec files only.*
+2. **More unit tests** (`tests/unit`). *New files only.*
 3. **Packaging**: electron-builder/forge config, app icon, NSIS installer. *Touches `package.json` and new config files.*
 4. **Export**: CSV/SRT output correctness in `pages/project/Export.tsx`.
 5. **Review features**: comments and versions in `pages/project/Review.tsx`.

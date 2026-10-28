@@ -72,6 +72,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const projectsRef = useRef(projects);
   const settingsRef = useRef(settings);
 
+  // Saves wait for the initial load; otherwise an early save would overwrite stored data with empty lists.
+  const loadedRef = useRef<{ promise: Promise<void>; resolve: () => void } | null>(null);
+  if (!loadedRef.current) {
+    let resolve = () => {};
+    const promise = new Promise<void>((r) => (resolve = r));
+    loadedRef.current = { promise, resolve };
+  }
+
   useEffect(() => {
     (async () => {
       const [loadedPresets, loadedProjects, loadedSettings] = await Promise.all([
@@ -86,6 +94,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setProjects(projectsRef.current);
       setSettings(settingsRef.current);
       setLoading(false);
+      loadedRef.current?.resolve();
     })();
   }, []);
 
@@ -104,6 +113,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const savePresets = useCallback(
     async (updater: Updater<Preset[]>) => {
+      await loadedRef.current?.promise;
       const next = typeof updater === 'function' ? updater(presetsRef.current) : updater;
       presetsRef.current = next.filter((p) => !p.builtIn);
       setPresets(presetsRef.current);
@@ -114,6 +124,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const saveProjects = useCallback(
     async (updater: Updater<Project[]>) => {
+      await loadedRef.current?.promise;
       const next = typeof updater === 'function' ? updater(projectsRef.current) : updater;
       projectsRef.current = next;
       setProjects(next);
@@ -124,6 +135,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const saveSettings = useCallback(
     async (updater: Updater<AppSettings>) => {
+      await loadedRef.current?.promise;
       const next = typeof updater === 'function' ? updater(settingsRef.current) : updater;
       settingsRef.current = next;
       setSettings(next);

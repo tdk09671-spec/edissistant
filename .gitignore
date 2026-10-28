@@ -17,6 +17,8 @@ npm-debug.log*
 *.bak
 *.swp
 coverage/
+test-results/
+playwright-report/
 
 # Secrets and credentials — never commit
 .env
@@ -56,6 +58,9 @@ Local State
 /media/
 /references/
 /client*/
+# Synthetic test fixtures are the only media allowed in the repo
+!tests/fixtures/*.mp4
+!tests/fixtures/*.srt
 
 # Editor / OS / tool-local
 .claude/settings.local.json

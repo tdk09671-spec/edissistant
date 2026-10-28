@@ -32,8 +32,10 @@ npm ci
 | `npm run build` | Production build: Vite → `dist/renderer`, tsc → `dist/main` |
 | `npm start` | Builds, then launches the built app in Electron |
 | `npm run dev` | Vite dev server on :5173 + Electron with `--dev` (hot reload for the renderer) |
+| `npm test` | Unit tests (Vitest), then build + end-to-end tests against the real Electron app (Playwright) |
+| `npm run test:unit` | Unit tests only. Fast, and runs in headless/cloud sessions |
 
-There is **no automated test suite in the repository yet** (no `npm test`). Verification so far has used throwaway Electron harness scripts; see `test_v1.txt` and [Test status](#test-status).
+See [TESTING.md](TESTING.md) for how the suite isolates user data, and for the latest test log.
 
 ## Verify a clean checkout
 
@@ -41,9 +43,10 @@ There is **no automated test suite in the repository yet** (no `npm test`). Veri
 npm ci
 npm run typecheck
 npm run build
+npm test            # needs a desktop session; use npm run test:unit when headless
 ```
 
-All three should finish with exit code 0. `npm start` needs a desktop session, so cloud or headless sessions can only run the first three.
+All of these should finish with exit code 0. `npm start` and the end-to-end tests need a desktop session.
 
 ## User data
 
@@ -58,15 +61,9 @@ The app stores its data outside the repository, in Electron's `userData` folder:
 
 ## Test status
 
-Latest results (2026-10-28, Windows 11, Electron 45.1.0):
-
-- Type-check (renderer + main): pass
-- Production build: pass
-- Clean checkout (`npm ci` + typecheck + build in a fresh copy): pass
-- Isolated smoke harness (scratch data folder, not committed): app launch, navigation to Dashboard/Projects/Presets/Settings, project creation via the New Project dialog, video preview and seeking via the media protocol, project and preset persistence across reload and restart: pass
-
-For the full list of features that have **not** been tested, see `test_v1.txt` section 6. Notable gaps: export to CSV/SRT, caption import, rename/duplicate/delete, settings toggles, keyboard-only navigation, packaged installer.
+`npm test` runs 36 automated tests (19 unit + 17 end-to-end). All pass on Windows 11 as of 2026-10-28. They cover project and preset management, navigation, video preview, revision workflows (segments, undo/redo, comments, versions), persistence across restarts, backup recovery, data migration and API-key migration. Coverage and gaps are listed in [TESTING.md](TESTING.md). The original manual/harness log is `test_v1.txt`.
 
 ## Further reading
 
+- [TESTING.md](TESTING.md): test commands, isolation, test log v2.
 - [ARCHITECTURE.md](ARCHITECTURE.md): process model, modules, Windows-specific handling, and areas suited to parallel development.
