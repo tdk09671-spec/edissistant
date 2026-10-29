@@ -8,7 +8,7 @@
   "fps": 25,
   "exportMode": "full-motion",
   "background": { "type": "cinematic", "light": "#3a6df0", "vignette": 0.7, "grain": 0.4 },
-  "camera": { "scale": { "keyframes": [{ "t": 0, "value": 1.04 }, { "t": 3, "value": 1, "easing": "linear" }] } },
+  "camera": { "scale": { "keyframes": [{ "t": 0, "value": 1.04, "easing": "linear" }, { "t": 3, "value": 1 }] } },
   "seed": 7,
   "layers": [
     { "id": "title", "type": "text", "transform": { "x": 640, "y": 110 },
@@ -34,7 +34,7 @@
         "edges": [{ "from": "a", "to": "b" }, { "from": "b", "to": "c" }],
         "nodeStyle": { "fill": "#1f2a44", "stroke": { "color": "#3a6df0", "width": 2 }, "radius": 12, "typography": { "fontFamily": "sans-serif", "fontSize": 22, "fontWeight": 600 }, "textColor": "#ffffff" },
         "edgeStyle": { "color": "#c8d0e0", "width": 3, "arrow": true }, "reveal": { "stagger": 0.2, "duration": 0.4 } } },
-    { "id": "star", "type": "path", "transform": { "x": 1120, "y": 120, "rotation": { "keyframes": [{ "t": 0, "value": 0 }, { "t": 3, "value": 90, "easing": "linear" }] } },
+    { "id": "star", "type": "path", "transform": { "x": 1120, "y": 120, "rotation": { "keyframes": [{ "t": 0, "value": 0, "easing": "linear" }, { "t": 3, "value": 90 }] } },
       "props": { "d": "M0 -50 L14 -15 L50 -15 L21 7 L32 45 L0 22 L-32 45 L-21 7 L-50 -15 L-14 -15 Z", "stroke": { "color": "#ffd166", "width": 4 }, "trim": { "keyframes": [{ "t": 0, "value": 0 }, { "t": 1.5, "value": 1 }] } } }
   ]
 }

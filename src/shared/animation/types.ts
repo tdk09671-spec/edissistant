@@ -111,7 +111,7 @@ export interface Transition {
 }
 
 export type Mask =
-  | { type: 'wipe'; direction: Direction; progress: Animatable<number>; feather?: number }
+  | { type: 'wipe'; direction: Direction; progress: Animatable<number> }
   | { type: 'rect'; x: Animatable<number>; y: Animatable<number>; width: Animatable<number>; height: Animatable<number> };
 
 export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'add';

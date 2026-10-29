@@ -10,7 +10,7 @@
   "background": { "type": "transparent" },
   "layers": [
     { "id": "bar", "type": "shape", "transform": { "x": 40, "y": 270 },
-      "mask": { "type": "wipe", "direction": "right", "progress": { "keyframes": [{ "t": 0, "value": 0 }, { "t": 0.5, "value": 1, "easing": "easeOutCubic" }] } },
+      "mask": { "type": "wipe", "direction": "right", "progress": { "keyframes": [{ "t": 0, "value": 0, "easing": "easeOutCubic" }, { "t": 0.5, "value": 1 }] } },
       "exit": { "type": "fade", "duration": 0.3 },
       "props": { "shape": "rect", "anchor": "top-left", "width": 360, "height": 64, "radius": 10, "fill": "rgba(16, 20, 32, 0.85)" } },
     { "id": "name", "type": "text", "start": 0.2, "transform": { "x": 64, "y": 292 },
