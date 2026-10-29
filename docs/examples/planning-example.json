@@ -1,0 +1,680 @@
+{
+  "profile": {
+    "id": "preset-northwind",
+    "fingerprint": "17a9b387fdd8d119adb72e220024",
+    "typography": {
+      "value": {
+        "headline": {
+          "family": "Playfair Display",
+          "fallback": "serif",
+          "weight": 700,
+          "letterSpacing": 3.2,
+          "textTransform": "none"
+        },
+        "body": {
+          "family": "Inter",
+          "fallback": "sans-serif",
+          "weight": 500,
+          "letterSpacing": 2,
+          "textTransform": "none"
+        }
+      },
+      "confidence": 0.95,
+      "sources": [
+        {
+          "kind": "preset",
+          "sourceId": "preset-northwind",
+          "note": "fonts: Playfair Display Bold, Inter Medium"
+        }
+      ]
+    },
+    "palette": {
+      "value": {
+        "background": "#0b0d12",
+        "text": "#f5f5f2",
+        "accents": [
+          "#e9c46a",
+          "#f4a261"
+        ],
+        "contrast": "high"
+      },
+      "confidence": 0.9,
+      "sources": [
+        {
+          "kind": "preset",
+          "sourceId": "preset-northwind",
+          "note": "brand colors"
+        }
+      ]
+    },
+    "background": {
+      "value": "cinematic",
+      "confidence": 0.75,
+      "sources": [
+        {
+          "kind": "brief",
+          "sourceId": "brief",
+          "note": "dark"
+        }
+      ]
+    },
+    "motion": {
+      "value": {
+        "energy": "calm",
+        "easing": "smooth",
+        "transitions": [
+          "fade",
+          "wipe",
+          "slide"
+        ],
+        "averageShotSeconds": null
+      },
+      "confidence": 0.75,
+      "sources": [
+        {
+          "kind": "brief",
+          "sourceId": "brief",
+          "note": "calm"
+        }
+      ]
+    },
+    "avoid": [
+      {
+        "kind": "effect",
+        "value": "overshoot",
+        "reason": "Brief: no bouncy motion"
+      }
+    ],
+    "confidence": 0.71,
+    "uncertainties": [
+      "Font \"Playfair Display\" must be installed on the render machine (or add its font file).",
+      "Font \"Inter\" must be installed on the render machine (or add its font file).",
+      "No reference videos analysed: motion and colors are inferred from the preset and brief only."
+    ]
+  },
+  "transcript": [
+    {
+      "id": "a2",
+      "start": 3.4,
+      "end": 7,
+      "text": "Today Northwind serves 1.2 million customers in 40 countries."
+    },
+    {
+      "id": "a3",
+      "start": 7.2,
+      "end": 10.8,
+      "text": "Revenue grew from $2 million in 2021 to $9 million this year."
+    },
+    {
+      "id": "a4",
+      "start": 11,
+      "end": 14.5,
+      "text": "Why does that matter for you?"
+    },
+    {
+      "id": "a5",
+      "start": 14.7,
+      "end": 19.2,
+      "text": "First we listen, then we prototype, and finally we ship in two weeks."
+    },
+    {
+      "id": "a6",
+      "start": 19.4,
+      "end": 22.6,
+      "text": "Our customers keep 85% more of their time for creative work."
+    }
+  ],
+  "plan": [
+    {
+      "segmentId": "a2",
+      "start": 3.4,
+      "end": 7,
+      "text": "Today Northwind serves 1.2 million customers in 40 countries.",
+      "status": "approved",
+      "suggestion": {
+        "conceptId": "counter-hero",
+        "visualMode": "motion-graphics",
+        "meaning": "A figure the viewer should remember",
+        "treatment": "Hero number count-up — “1.2 million” (Playfair Display, cinematic background)",
+        "reasoning": "\"1.2 million\" is the point — counting it up makes it land.",
+        "params": {
+          "headline": "Today Northwind serves 1.2 million customers in 40 countries",
+          "emphasis": [
+            "Today",
+            "Northwind",
+            "1"
+          ],
+          "values": [
+            {
+              "value": 1200000,
+              "label": "1.2 million",
+              "context": "customers"
+            },
+            {
+              "value": 40,
+              "label": "40",
+              "context": "countries"
+            }
+          ]
+        },
+        "transition": "fade",
+        "requiredAssets": [],
+        "source": "local",
+        "varietyNotes": []
+      },
+      "rejectedConcepts": []
+    },
+    {
+      "segmentId": "a3",
+      "start": 7.2,
+      "end": 10.8,
+      "text": "Revenue grew from $2 million in 2021 to $9 million this year.",
+      "status": "approved",
+      "suggestion": {
+        "conceptId": "line-trend",
+        "visualMode": "motion-graphics",
+        "meaning": "A monetary amount",
+        "treatment": "Trend line — “$2 million” (Playfair Display, cinematic background)",
+        "reasoning": "The sentence describes change over time, which reads best as a line drawing on.",
+        "params": {
+          "headline": "Revenue grew from $2 million in 2021 to $9 million this year",
+          "emphasis": [
+            "Revenue",
+            "2",
+            "million"
+          ],
+          "values": [
+            {
+              "value": 2000000,
+              "unit": "currency",
+              "label": "$2 million"
+            },
+            {
+              "value": 9000000,
+              "unit": "currency",
+              "label": "$9 million",
+              "context": "this year"
+            }
+          ]
+        },
+        "transition": "wipe",
+        "requiredAssets": [],
+        "source": "local",
+        "varietyNotes": []
+      },
+      "rejectedConcepts": []
+    },
+    {
+      "segmentId": "a4",
+      "start": 11,
+      "end": 14.5,
+      "text": "Why does that matter for you?",
+      "status": "suggested",
+      "suggestion": {
+        "conceptId": "caption-emphasis",
+        "visualMode": "captions",
+        "meaning": "A question to the viewer",
+        "treatment": "Emphasis captions — “Why does that matter for you?” (Playfair Display, cinematic background)",
+        "reasoning": "A spoken beat without a natural graphic; styled captions keep it engaging.",
+        "params": {
+          "headline": "Why does that matter for you?",
+          "emphasis": []
+        },
+        "transition": "slide",
+        "requiredAssets": [],
+        "source": "local",
+        "varietyNotes": [
+          "No strong visual idea for this sentence; kept it simple."
+        ]
+      },
+      "rejectedConcepts": [
+        "question-card"
+      ]
+    },
+    {
+      "segmentId": "a5",
+      "start": 14.7,
+      "end": 19.2,
+      "text": "First we listen, then we prototype, and finally we ship in two weeks.",
+      "status": "approved",
+      "suggestion": {
+        "conceptId": "process-steps",
+        "visualMode": "motion-graphics",
+        "meaning": "Several items",
+        "treatment": "Process flow — “First we listen” (Playfair Display, cinematic background)",
+        "reasoning": "The speaker walks through steps; a flow shows the order.",
+        "params": {
+          "headline": "First we listen",
+          "emphasis": [
+            "First",
+            "prototype",
+            "finally"
+          ],
+          "items": [
+            "we listen",
+            "we prototype",
+            "we ship in two weeks"
+          ]
+        },
+        "transition": "fade",
+        "requiredAssets": [],
+        "source": "local",
+        "varietyNotes": []
+      },
+      "overrides": {
+        "conceptId": "list-stack",
+        "params": {
+          "pace": 1.3
+        }
+      },
+      "rejectedConcepts": []
+    },
+    {
+      "segmentId": "a6",
+      "start": 19.4,
+      "end": 22.6,
+      "text": "Our customers keep 85% more of their time for creative work.",
+      "status": "suggested",
+      "suggestion": {
+        "conceptId": "progress-ring",
+        "visualMode": "motion-graphics",
+        "meaning": "A proportion or rate",
+        "treatment": "Progress ring — “85%” (Playfair Display, cinematic background)",
+        "reasoning": "A share (85%) reads instantly as a filling ring.",
+        "params": {
+          "headline": "Our customers keep 85% more of their time for creative work",
+          "emphasis": [
+            "customers",
+            "85",
+            "creative"
+          ],
+          "values": [
+            {
+              "value": 85,
+              "unit": "percent",
+              "label": "85%"
+            }
+          ]
+        },
+        "transition": "wipe",
+        "requiredAssets": [],
+        "source": "local",
+        "varietyNotes": []
+      },
+      "rejectedConcepts": []
+    }
+  ],
+  "findings": [],
+  "adapter": [
+    {
+      "segmentId": "a2",
+      "status": "renderable",
+      "warnings": [
+        "Font \"Playfair Display\" must be installed on the render machine.",
+        "Font \"Inter\" must be installed on the render machine."
+      ]
+    },
+    {
+      "segmentId": "a3",
+      "status": "renderable",
+      "warnings": [
+        "Font \"Playfair Display\" must be installed on the render machine.",
+        "Font \"Inter\" must be installed on the render machine."
+      ]
+    },
+    {
+      "segmentId": "a4",
+      "status": "not-approved",
+      "reason": "Segment is suggested; approve it before rendering."
+    },
+    {
+      "segmentId": "a5",
+      "status": "renderable",
+      "warnings": [
+        "Font \"Playfair Display\" must be installed on the render machine.",
+        "Font \"Inter\" must be installed on the render machine."
+      ]
+    },
+    {
+      "segmentId": "a6",
+      "status": "not-approved",
+      "reason": "Segment is suggested; approve it before rendering."
+    }
+  ],
+  "sequence": {
+    "id": "example",
+    "width": 1920,
+    "height": 1080,
+    "fps": 25,
+    "duration": 19.2,
+    "segments": [
+      {
+        "specVersion": 1,
+        "id": "a2",
+        "start": 3.4,
+        "duration": 3.6,
+        "width": 1920,
+        "height": 1080,
+        "fps": 25,
+        "exportMode": "full-motion",
+        "background": {
+          "type": "cinematic",
+          "color": "#0b0d12",
+          "light": "#e9c46a",
+          "vignette": 0.6,
+          "grain": 0.5
+        },
+        "seed": 366430158,
+        "layers": [
+          {
+            "id": "number",
+            "type": "counter",
+            "transform": {
+              "x": 960,
+              "y": 486
+            },
+            "enter": {
+              "type": "fade",
+              "duration": 0.53,
+              "easing": "easeOutCubic"
+            },
+            "exit": {
+              "type": "fade",
+              "duration": 0.35,
+              "easing": "easeInCubic"
+            },
+            "props": {
+              "from": 0,
+              "to": 1.2,
+              "decimals": 1,
+              "prefix": "",
+              "suffix": "M",
+              "duration": 1.65,
+              "easing": "easeOutExpo",
+              "typography": {
+                "fontFamily": "Playfair Display",
+                "fallback": "serif",
+                "allowFallback": false,
+                "fontWeight": 700,
+                "fontSize": 173,
+                "letterSpacing": 3.2,
+                "textTransform": "none"
+              },
+              "color": "#e9c46a",
+              "align": "center"
+            }
+          },
+          {
+            "id": "label",
+            "type": "text",
+            "transform": {
+              "x": 960,
+              "y": 633.05
+            },
+            "start": 0.3,
+            "enter": {
+              "type": "slide",
+              "duration": 0.53,
+              "easing": "easeOutCubic",
+              "direction": "up",
+              "distance": 30
+            },
+            "exit": {
+              "type": "fade",
+              "duration": 0.35,
+              "easing": "easeInCubic"
+            },
+            "props": {
+              "text": "Today Northwind serves 1.2 million customers in 40 countries",
+              "typography": {
+                "fontFamily": "Inter",
+                "fallback": "sans-serif",
+                "allowFallback": false,
+                "fontWeight": 500,
+                "fontSize": 43,
+                "letterSpacing": 2,
+                "textTransform": "none"
+              },
+              "color": "#f5f5f2",
+              "align": "center",
+              "maxWidth": 1344
+            }
+          }
+        ]
+      },
+      {
+        "specVersion": 1,
+        "id": "a3",
+        "start": 7.2,
+        "duration": 3.6,
+        "width": 1920,
+        "height": 1080,
+        "fps": 25,
+        "exportMode": "full-motion",
+        "background": {
+          "type": "cinematic",
+          "color": "#0b0d12",
+          "light": "#e9c46a",
+          "vignette": 0.6,
+          "grain": 0.5
+        },
+        "seed": 1656071595,
+        "layers": [
+          {
+            "id": "trend",
+            "type": "lineChart",
+            "transform": {
+              "x": 960,
+              "y": 594
+            },
+            "exit": {
+              "type": "fade",
+              "duration": 0.35,
+              "easing": "easeInCubic"
+            },
+            "props": {
+              "series": [
+                {
+                  "points": [
+                    2000000,
+                    9000000
+                  ],
+                  "color": "#e9c46a",
+                  "width": 5
+                }
+              ],
+              "width": 1152,
+              "height": 432,
+              "draw": {
+                "duration": 1.41,
+                "easing": "easeOutCubic"
+              },
+              "dots": {
+                "radius": 8
+              },
+              "gridLines": 4,
+              "gridColor": "rgba(245, 245, 242, 0.12)",
+              "labels": {
+                "typography": {
+                  "fontFamily": "Inter",
+                  "fallback": "sans-serif",
+                  "allowFallback": false,
+                  "fontWeight": 700,
+                  "fontSize": 43,
+                  "letterSpacing": 2,
+                  "textTransform": "none"
+                },
+                "color": "#f5f5f2",
+                "text": [
+                  "$2 million",
+                  "$9 million"
+                ]
+              }
+            }
+          },
+          {
+            "id": "caption",
+            "type": "text",
+            "transform": {
+              "x": 960,
+              "y": 216
+            },
+            "enter": {
+              "type": "fade",
+              "duration": 0.53,
+              "easing": "easeOutCubic"
+            },
+            "exit": {
+              "type": "fade",
+              "duration": 0.35,
+              "easing": "easeInCubic"
+            },
+            "props": {
+              "text": "Revenue grew from $2 million in 2021 to $9 million this year",
+              "typography": {
+                "fontFamily": "Inter",
+                "fallback": "sans-serif",
+                "allowFallback": false,
+                "fontWeight": 500,
+                "fontSize": 43,
+                "letterSpacing": 2,
+                "textTransform": "none"
+              },
+              "color": "#f5f5f2",
+              "align": "center",
+              "maxWidth": 1344
+            }
+          }
+        ]
+      },
+      {
+        "specVersion": 1,
+        "id": "a5",
+        "start": 14.7,
+        "duration": 4.5,
+        "width": 1920,
+        "height": 1080,
+        "fps": 25,
+        "exportMode": "full-motion",
+        "background": {
+          "type": "cinematic",
+          "color": "#0b0d12",
+          "light": "#e9c46a",
+          "vignette": 0.6,
+          "grain": 0.5
+        },
+        "seed": 143311618,
+        "layers": [
+          {
+            "id": "item0",
+            "type": "text",
+            "transform": {
+              "x": 422.4,
+              "y": 432
+            },
+            "start": 0,
+            "enter": {
+              "type": "slide",
+              "duration": 0.41,
+              "easing": "easeOutCubic",
+              "direction": "right",
+              "distance": 40
+            },
+            "exit": {
+              "type": "fade",
+              "duration": 0.27,
+              "easing": "easeInCubic"
+            },
+            "props": {
+              "text": "we listen",
+              "typography": {
+                "fontFamily": "Inter",
+                "fallback": "sans-serif",
+                "allowFallback": false,
+                "fontWeight": 500,
+                "fontSize": 43,
+                "letterSpacing": 2,
+                "textTransform": "none"
+              },
+              "color": "#f5f5f2",
+              "align": "left",
+              "maxWidth": 1152
+            }
+          },
+          {
+            "id": "item1",
+            "type": "text",
+            "transform": {
+              "x": 422.4,
+              "y": 540
+            },
+            "start": 0.23,
+            "enter": {
+              "type": "slide",
+              "duration": 0.41,
+              "easing": "easeOutCubic",
+              "direction": "right",
+              "distance": 40
+            },
+            "exit": {
+              "type": "fade",
+              "duration": 0.27,
+              "easing": "easeInCubic"
+            },
+            "props": {
+              "text": "we prototype",
+              "typography": {
+                "fontFamily": "Inter",
+                "fallback": "sans-serif",
+                "allowFallback": false,
+                "fontWeight": 500,
+                "fontSize": 43,
+                "letterSpacing": 2,
+                "textTransform": "none"
+              },
+              "color": "#f5f5f2",
+              "align": "left",
+              "maxWidth": 1152
+            }
+          },
+          {
+            "id": "item2",
+            "type": "text",
+            "transform": {
+              "x": 422.4,
+              "y": 648
+            },
+            "start": 0.45,
+            "enter": {
+              "type": "slide",
+              "duration": 0.41,
+              "easing": "easeOutCubic",
+              "direction": "right",
+              "distance": 40
+            },
+            "exit": {
+              "type": "fade",
+              "duration": 0.27,
+              "easing": "easeInCubic"
+            },
+            "props": {
+              "text": "we ship in two weeks",
+              "typography": {
+                "fontFamily": "Inter",
+                "fallback": "sans-serif",
+                "allowFallback": false,
+                "fontWeight": 500,
+                "fontSize": 43,
+                "letterSpacing": 2,
+                "textTransform": "none"
+              },
+              "color": "#f5f5f2",
+              "align": "left",
+              "maxWidth": 1152
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
