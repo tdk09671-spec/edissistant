@@ -346,8 +346,15 @@ These were checked against the latest heads of both PRs on 2026-10-29: PR #1
 - This branch only adds files, apart from four shared edits:
   - `package.json` and `package-lock.json`: one new dependency, `@anthropic-ai/sdk`.
   - `tsconfig.json` and `tsconfig.main.json`: a `src/shared` change that is byte-identical to the one in PR #1 and PR #2.
-- A trial merge of main + PR #1 + PR #2 + this branch, in that order, had no conflicts. Typecheck was clean, 336 unit tests passed with 1 skipped, the PR #2 compatibility tests ran and passed, and the build succeeded.
-- After the merges, run `npm ci`. If the merged `package-lock.json` is rejected, run `npm install` once and commit the regenerated lock.
+- A trial merge of main + PR #1 + PR #2 + this branch, in that order (at this branch's `d44de2d`), had no conflicts:
+  - `npm ci` accepted the merged `package-lock.json`.
+  - Typecheck was clean, 350 unit tests passed with 2 skipped, the PR #2 compatibility tests ran and passed 2/2, and the build succeeded.
+- After the merges, run `npm ci`. If the merged `package-lock.json` is ever rejected, run `npm install` once and commit the regenerated lock.
+- **End-to-end tests on the combined tree** (Linux container, running as root): 27 passed and 5 failed. Neither failure comes from this branch; no planning code is loaded by the running app.
+  - **4 × `launcher.spec.ts` (PR #1):** the test starts Electron directly, and Electron refuses to run as root without `--no-sandbox` (`SIGTRAP`, status `null`). PR #1 alone fails the same way here, and PR #1 recorded these tests passing on Windows. This is an artefact of the container, not of the code.
+  - **1 × `rendering.spec.ts:167` (PR #2), intermittent:** the sandbox-probe test starts a 6-second preview render and then expects cancelling it to return `CANCELLED`. When the render finishes first, it gets `ok: true`.
+    - Failure rate when the test ran alone, 15 runs each: PR #2 alone 3/15, PR #1 + PR #2 7/15, PR #1 + PR #2 + this branch 8/15.
+    - It is a timing race in PR #2's test. A fix belongs in PR #2: give the probe render a much longer `duration` (for example 60 s), so it is still running when the cancel arrives.
 
 ### PR #1 (local transcription)
 
