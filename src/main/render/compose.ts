@@ -43,7 +43,9 @@ export function compositionArgs(req: CompositionRequest): string[] {
   else args.push('-f', 'lavfi', '-i', `color=c=black:s=${w}x${h}:r=${rate}:d=${req.duration}`);
   for (const clip of req.clips) {
     if (clip.codec === 'vp9') args.push('-c:v', 'libvpx-vp9');
-    args.push('-i', clip.path);
+    // One decoder thread per clip: by default each input gets a frame thread per CPU core, which costs
+    // ~0.45 GB per 1080p ProRes 4444 clip and grows with the number of segments.
+    args.push('-threads', '1', '-i', clip.path);
   }
 
   const pad = req.baseVideo ? 'tpad=stop=-1:stop_mode=add:color=black,' : '';
@@ -54,7 +56,7 @@ export function compositionArgs(req: CompositionRequest): string[] {
     filters.push(`[${i + 1}:v]scale=${w}:${h},format=yuva444p,setpts=PTS-STARTPTS+${start}/TB[clip${i}]`);
     filters.push(`[base${i}][clip${i}]overlay=eof_action=pass:enable='gte(t,${start})*lt(t,${end})'[base${i + 1}]`);
   });
-  filters.push(`[base${req.clips.length}]format=yuv420p[out]`);
+  filters.push(`[base${req.clips.length}]format=yuv420p,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709[out]`);
 
   args.push('-filter_complex', filters.join(';'), '-map', '[out]');
   if (req.baseVideo) args.push('-map', '0:a?', '-c:a', 'aac', '-b:a', '160k');

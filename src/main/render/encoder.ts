@@ -16,9 +16,13 @@ export interface EncodeTarget {
   preview?: boolean;
 }
 
-// Rec. 709 tagging and matrix for every YUV output, so graphics match footage in an NLE.
+// Rec. 709 tagging and matrix for every YUV output, so graphics match footage in an NLE. FFmpeg 7+
+// writes the tags of the filtered frames, which -color_* alone doesn't set, so setparams sets them too.
 const BT709 = ['-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv'];
-const YUV_FILTER = (pixFmt: string) => ['-vf', `scale=out_color_matrix=bt709:out_range=tv,format=${pixFmt}`];
+const YUV_FILTER = (pixFmt: string) => [
+  '-vf',
+  `scale=out_color_matrix=bt709:out_range=tv,format=${pixFmt},setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv`,
+];
 
 /** FFmpeg encoder arguments (after the input) for a format. Exposed for tests and documentation. */
 export function codecArgs(target: EncodeTarget): string[] {
@@ -134,7 +138,8 @@ export async function encodeFrames(
       if (exited) break;
       const buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
       if (!child.stdin.write(buffer)) {
-        await Promise.race([once(child.stdin, 'drain'), closed]);
+        // once() rejects if stdin errors (EPIPE/EOF) while waiting; then FFmpeg has quit and its exit code is reported.
+        await Promise.race([once(child.stdin, 'drain').catch(() => undefined), closed]);
       }
       options.onFrame?.(i + 1);
     }

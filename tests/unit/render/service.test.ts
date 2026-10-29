@@ -3,8 +3,10 @@ import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { exportRender } from '../../../src/main/render/ipc';
 import { decodeFrames, probeVideo } from '../../../src/main/render/probe';
-import { RenderService } from '../../../src/main/render/service';
-import { selectH264Encoder, probeEncoder } from '../../../src/main/render/gpu';
+import { encodeFrames } from '../../../src/main/render/encoder';
+import { h264WithCpuFallback, RenderService } from '../../../src/main/render/service';
+import { RenderError } from '../../../src/shared/animation/errors';
+import { hardwareCandidates, probeEncoder, selectH264Encoder } from '../../../src/main/render/gpu';
 import type { RenderProgress, SequenceSpec } from '../../../src/shared/animation';
 import { ffmpeg, ffprobe, fullSpec, hasFfmpeg, pixelAt, syntheticFrames, tempDir, transparentSpec } from './helpers';
 
@@ -175,10 +177,47 @@ describe.skipIf(!hasFfmpeg)('RenderService with real FFmpeg', () => {
 
   it('only uses a hardware H.264 encoder after a real test encode succeeds', async () => {
     expect(await selectH264Encoder(ffmpeg!, 'off')).toBe('libx264');
-    // This container has no GPU: every candidate fails its probe, so previews stay on the CPU.
-    expect(await probeEncoder(ffmpeg!, 'h264_nvenc')).toBe(false);
-    expect(await selectH264Encoder(ffmpeg!, 'auto', 'linux')).toBe('libx264');
     expect(await probeEncoder(ffmpeg!, 'libx264')).toBe(true);
+    expect(await probeEncoder(ffmpeg!, 'no_such_encoder')).toBe(false);
+    // Whatever this machine has: the choice is the first candidate whose real test encode succeeds.
+    const platform = process.platform;
+    let expected = 'libx264';
+    for (const candidate of hardwareCandidates(platform)) {
+      if (await probeEncoder(ffmpeg!, candidate)) {
+        expected = candidate;
+        break;
+      }
+    }
+    expect(await selectH264Encoder(ffmpeg!, 'auto', platform)).toBe(expected);
+  });
+
+  it('re-encodes on the CPU when a hardware H.264 encoder fails mid-render', async () => {
+    // Regression: NVENC passed its probe but failed on a 6144-px-wide render (limit 4096), failing the job.
+    const out = path.join(root, 'fallback.mp4');
+    const frame = new Uint8Array(64 * 32 * 4).fill(200);
+    const tried: string[] = [];
+    const run = (h264Encoder: string) => {
+      tried.push(h264Encoder);
+      return encodeFrames(ffmpeg!, { format: 'h264-mp4', width: 64, height: 32, fps: 25, h264Encoder }, out, 5, async () => frame);
+    };
+    const used = await h264WithCpuFallback('no_such_encoder', undefined, run);
+    expect(tried).toEqual(['no_such_encoder', 'libx264']);
+    expect(used.encoder).toBe('libx264');
+    expect(used.warnings[0]).toMatch(/no_such_encoder could not encode this render/);
+    expect(await probeVideo(ffprobe!, out)).toMatchObject({ codec: 'h264', frames: 5 });
+  });
+
+  it('does not retry on the CPU after a cancel, a non-encoder error or a libx264 failure', async () => {
+    const fail = (error: Error) => async () => {
+      throw error;
+    };
+    const controller = new AbortController();
+    controller.abort();
+    const encodeFailed = new RenderError('ENCODE_FAILED', 'x');
+    await expect(h264WithCpuFallback('h264_nvenc', controller.signal, fail(encodeFailed))).rejects.toBe(encodeFailed);
+    const sandbox = new RenderError('SANDBOX_FAILED', 'x');
+    await expect(h264WithCpuFallback('h264_nvenc', undefined, fail(sandbox))).rejects.toBe(sandbox);
+    await expect(h264WithCpuFallback('libx264', undefined, fail(encodeFailed))).rejects.toBe(encodeFailed);
   });
 });
 

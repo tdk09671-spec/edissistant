@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -70,6 +71,13 @@ describe.skipIf(!hasFfmpeg)('encoding with real FFmpeg', () => {
     expect(Math.abs(b - 40)).toBeLessThanOrEqual(3);
   });
 
+  it.each(['prores-4444', 'prores-422hq', 'h264-mp4', 'vp9-webm'] as ExportFormatId[])('%s is tagged Rec. 709 in the file itself', async (format) => {
+    // Regression: FFmpeg 7+ takes the tags from the filtered frames, so -color_* alone left them unset.
+    const file = await encode(format, [ramp, ramp]);
+    const tags = execFileSync(ffprobe!, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=color_space,color_primaries,color_transfer', '-of', 'json', file], { encoding: 'utf8' });
+    expect(JSON.parse(tags).streams[0]).toEqual({ color_space: 'bt709', color_primaries: 'bt709', color_transfer: 'bt709' });
+  });
+
   it('VP9 WebM keeps alpha in flat areas (lossy at edges) when decoded with libvpx', async () => {
     const halves = makeFrame(W, H, (x) => (x < W / 2 ? [0, 0, 0, 0] : [255, 255, 255, 255]));
     const file = await encode('vp9-webm', [halves, halves]);
@@ -129,6 +137,19 @@ describe.skipIf(!hasFfmpeg)('encoding with real FFmpeg', () => {
     await expect(
       encodeFrames(ffmpeg!, { format: 'h264-mp4', width: W, height: H, fps: 25, h264Encoder: 'no_such_encoder' }, path.join(dir, 'b.mp4'), 3, async () => ramp)
     ).rejects.toMatchObject({ code: 'ENCODE_FAILED', details: expect.stringMatching(/no_such_encoder|Unknown encoder/i) });
+  });
+
+  it('reports ENCODE_FAILED, not a raw EPIPE, when FFmpeg quits while frames are queued', async () => {
+    // Regression: NVENC rejected a 6144-px frame after FFmpeg had started reading; the pending 'drain'
+    // wait rejected with EPIPE, so the job failed as RENDER_FAILED and FFmpeg's message was lost.
+    // An odd width is likewise only rejected once frames arrive; 8 MB frames fill the pipe first.
+    const width = 2001;
+    const big = new Uint8Array(width * 1000 * 4);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await expect(
+        encodeFrames(ffmpeg!, { format: 'h264-mp4', width, height: 1000, fps: 25, h264Encoder: 'libx264' }, path.join(dir, `odd${attempt}.mp4`), 40, async () => big)
+      ).rejects.toMatchObject({ code: 'ENCODE_FAILED' });
+    }
   });
 
   it('alphaStats counts transparent, partial and opaque pixels', () => {

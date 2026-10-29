@@ -50,6 +50,23 @@ function even(n: number): number {
   return Math.max(2, Math.round(n / 2) * 2);
 }
 
+/**
+ * Runs an H.264 encode. A hardware encoder can pass its startup probe and still fail on a real render
+ * (NVENC is limited to 4096 px wide; sessions can be taken by other apps), so a failure is retried once
+ * on the CPU with libx264.
+ */
+export async function h264WithCpuFallback(encoder: string, signal: AbortSignal | undefined, run: (encoder: string) => Promise<unknown>): Promise<{ encoder: string; warnings: string[] }> {
+  try {
+    await run(encoder);
+    return { encoder, warnings: [] };
+  } catch (error) {
+    const encodeFailure = error instanceof RenderError && (error.code === 'ENCODE_FAILED' || error.code === 'COMPOSE_FAILED');
+    if (encoder === 'libx264' || signal?.aborted || !encodeFailure) throw error;
+    await run('libx264');
+    return { encoder: 'libx264', warnings: [`${encoder} could not encode this render, so it was encoded on the CPU (libx264).`] };
+  }
+}
+
 function invalid(issues: { path: string; message: string }[]): RenderError {
   const first = issues[0];
   return new RenderError('INVALID_SPEC', `The animation spec is invalid: ${first.path} ${first.message}${issues.length > 1 ? ` (+${issues.length - 1} more)` : ''}.`, { issues });
@@ -205,15 +222,17 @@ export class RenderService {
     try {
       const { warnings } = await source.open(signal);
       if (signal?.aborted) throw cancelled();
-      await encodeFrames(tools.ffmpeg, { format, width, height, fps: spec.fps, h264Encoder: encoder, preview: quality === 'preview' }, output, frames, (i) => source.frame(i), {
-        signal,
-        onFrame: (n) => report('rendering', at(0.05 + 0.9 * (n / frames)), `Rendering ${spec.id}: frame ${n}/${frames}`, { segmentId: spec.id, frame: n, totalFrames: frames }),
-      });
+      const encode = (h264Encoder: string) =>
+        encodeFrames(tools.ffmpeg, { format, width, height, fps: spec.fps, h264Encoder, preview: quality === 'preview' }, output, frames, (i) => source.frame(i), {
+          signal,
+          onFrame: (n) => report('rendering', at(0.05 + 0.9 * (n / frames)), `Rendering ${spec.id}: frame ${n}/${frames}`, { segmentId: spec.id, frame: n, totalFrames: frames }),
+        });
+      const used = format === 'h264-mp4' ? await h264WithCpuFallback(encoder, signal, encode) : (await encode(encoder), { encoder, warnings: [] });
       report('validating-output', at(0.97), `Checking ${spec.id}`, { segmentId: spec.id });
       const metadata = await validateOutput(tools.ffprobe, output, { format, width, height, fps: spec.fps, frames });
-      const entry = this.cache.put(key, output, { segmentId: spec.id, format, scale, metadata, encoder });
+      const entry = this.cache.put(key, output, { segmentId: spec.id, format, scale, metadata, encoder: used.encoder });
       this.cache.prune(this.config.maxCacheBytes ?? 50 * 1024 ** 3);
-      return { segmentId: spec.id, key, path: entry.path, format, metadata, fromCache: false, encoder, warnings: [...checked.warnings.map((w) => `${w.path}: ${w.message}`), ...warnings] };
+      return { segmentId: spec.id, key, path: entry.path, format, metadata, fromCache: false, encoder: used.encoder, warnings: [...checked.warnings.map((w) => `${w.path}: ${w.message}`), ...warnings, ...used.warnings] };
     } finally {
       await source.close().catch(() => undefined);
       this.cache.discard(workDir);
@@ -253,13 +272,15 @@ export class RenderService {
     const output = path.join(workDir, 'preview.mp4');
     try {
       report('composing', 0.86, 'Composing the preview');
-      await composePreview(
-        tools.ffmpeg,
-        { width, height, fps: sequence.fps, duration: sequence.duration, clips, baseVideo: options.baseVideo, output, h264Encoder: encoder },
-        { signal, onProgress: (f) => report('composing', 0.86 + 0.12 * f, 'Composing the preview') }
+      const used = await h264WithCpuFallback(encoder, signal, (h264Encoder) =>
+        composePreview(
+          tools.ffmpeg,
+          { width, height, fps: sequence.fps, duration: sequence.duration, clips, baseVideo: options.baseVideo, output, h264Encoder },
+          { signal, onProgress: (f) => report('composing', 0.86 + 0.12 * f, 'Composing the preview') }
+        )
       );
       const metadata = await validateOutput(tools.ffprobe, output, { format: 'h264-mp4', width, height, fps: sequence.fps, frames: frameCount(sequence.duration, sequence.fps) });
-      const entry = this.cache.put(key, output, { segmentId: `${sequence.id}:preview`, format: 'h264-mp4', scale: width / sequence.width, metadata, encoder });
+      const entry = this.cache.put(key, output, { segmentId: `${sequence.id}:preview`, format: 'h264-mp4', scale: width / sequence.width, metadata, encoder: used.encoder });
       return { path: entry.path, metadata, fromCache: false };
     } finally {
       this.cache.discard(workDir);
