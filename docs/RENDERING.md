@@ -123,6 +123,9 @@ TypeScript types: `src/shared/animation/types.ts`. Examples: `tests/fixtures/ani
 
 - **Animatable values**: any number or color can be a constant or `{ "keyframes": [{ "t", "value", "easing" }] }`
   (`t` in seconds from the layer start). Easing: 18 named curves, `{ "cubicBezier": [x1, y1, x2, y2] }` or `{ "steps": n }`.
+  A keyframe's `easing` shapes the motion **from that keyframe to the next** (as in CSS and Lottie), so the last
+  keyframe's easing is unused. Without one, the span uses `easeInOutCubic`; set `"easing": "linear"` on the
+  earlier keyframe for constant speed.
 - **Layer types (reusable primitives)**: `text` (staggered char/word/line reveals: fade, rise, scale, mask,
   typewriter), `shape` (rect/ellipse/line, draw-on), `path` (SVG path with trim/draw-on: any new shape or
   icon without code), `counter`, `barChart`, `lineChart`, `progress` (bar/ring), `highlight`
@@ -219,8 +222,14 @@ Optional, and only for H.264 (previews and `h264-mp4`). On first use, each hardw
 platform (`h264_nvenc`, `h264_qsv`, `h264_amf` on Windows; `h264_videotoolbox` on macOS) must
 complete a real test encode before it is used. Otherwise everything stays on `libx264`. ProRes,
 Animation, PNG and VP9 always encode on the CPU. Frame drawing uses a CPU-backed canvas on purpose,
-for readback speed and identical output on every GPU. **No GPU path has been tested.** This container
-has none; the tests only prove that probing falls back to `libx264`.
+for readback speed and identical output on every GPU. A hardware encoder can pass the probe and still
+fail on a real render (NVENC H.264 is limited to 4096 px wide; other apps can hold its sessions), so a failed
+hardware encode is retried once on `libx264` and the result carries a warning.
+
+Tested on Windows with an RTX 3070 (driver 617.42): `h264_nvenc` is validated and used; `h264_qsv` and
+`h264_amf` fail their probes and are skipped. A 1080p NVENC render measured 43.3 dB PSNR / 0.96 SSIM against
+a ProRes reference (24 Mbps). There is no setting to turn GPU encoding off yet (the app's hardware
+acceleration setting does not affect it).
 
 ## Windows setup
 
@@ -281,6 +290,57 @@ Run in this Linux container (Node 22.22, FFmpeg 6.1.1, Electron 45 under `xvfb-r
 
 Totals: `npm run test:unit` 130/130 (36 existing + 94 new). `npx playwright test` under xvfb: 27/27 (18 existing + 9 new).
 
+### Windows 11 (2026-10-29)
+
+Windows 11 Pro 10.0.26300, Ryzen 7 3800XT (8C/16T), 32 GB, RTX 3070, Node 22.14, Electron 45, FFmpeg
+N-120858 (2025-08-31, 8.0-dev). `npm run typecheck`, `npm run build` ✅; `npm run test:unit` 137/137;
+`npx playwright test` 27/27. Beyond the suites, the built app was driven through `window.electronAPI` with an
+isolated appData folder and every output decoded again with FFmpeg:
+
+| Area | Result |
+| --- | --- |
+| All six formats: frame count, size, rate, pixel format | ✅ |
+| Alpha (ProRes 4444, Animation, PNG-MOV, VP9): empty areas alpha 0; 50 % white decodes as RGB 255 / alpha 128 (straight, unpremultiplied); no dark fringe on anti-aliased edges | ✅ |
+| Colour: #c87828 exact (alpha formats) / within 3 code values (422 HQ, H.264); 75 % bars within 2 | ✅ |
+| Rec. 709 tags (`color_space`, `color_primaries`, `color_transfer`) in every YUV output and the preview | ✅ after fix |
+| Keyframes: linear, easeInOutCubic, cubic-bezier, opacity, scale match the maths on every frame (≤ 0.01 px) | ✅ |
+| Caption cues and timeline placement on the exact frame at 25, 30, 23.976 and 29.97 fps | ✅ |
+| Backgrounds (solid, linear/radial gradient, paper, cinematic, image) deterministic; all components, masks, transitions, groups | ✅ |
+| 60 s preview over footage: 1500 frames, source audio kept (0 ms lag, correlation 0.9999), graphics from frame 126 | ✅ |
+| Unicode and space paths: appData, cache, configured FFmpeg folder, assets, export folder and names | ✅ |
+| Cancel / quit mid-render: `ffmpeg.exe` gone in 0.25 s / 0.42 s, no files left, clean relaunch | ✅ |
+| Invalid specs (14 kinds incl. injection attempts), missing fonts/media/base video | ✅ |
+| `npm run dev`: sandbox served by Vite renders byte-identical frames to the production build | ✅ |
+| Integration with PR #1 (local merge): 245 unit tests, E2E 32 + 1 skipped; transcription and rendering run concurrently and quit cleanly | ✅ |
+
+Fixed during Windows validation: missing Rec. 709 tags with FFmpeg 7+; a test that assumed no GPU; NVENC
+failures (e.g. > 4096 px) now fall back to `libx264`; an FFmpeg exit while frames were queued surfaced as a raw
+`EPIPE`/`EOF` instead of `ENCODE_FAILED`; preview composition memory (one decoder thread per clip:
+24 × 1080p segments 10.8 → 4.5 GB); `mask.feather` was typed but not supported; keyframe easing semantics
+documented and the fixtures corrected.
+
+## Performance (Windows 11, Ryzen 7 3800XT, RTX 3070)
+
+Measured with ~40–50 % unrelated background CPU load on the machine, so these are conservative.
+CPU = whole-system average; cores = average cores used.
+
+| Render | Time | fps | Size | CPU | Electron / FFmpeg cores | Peak RAM | GPU / NVENC |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1080p25 10 s ProRes 422 HQ (showcase) | 15.5 s | 16.1 | 243 MB | 84 % | 1.1 / 5.1 | 0.6 GB | 23 % / – |
+| 1080p30 10 s ProRes 422 HQ | 17.7 s | 17.0 | 292 MB | 78 % | 1.1 / 5.5 | 0.5 GB | 26 % / – |
+| 1080p25 10 s H.264 (NVENC) | 14.2 s | 17.6 | 28 MB | 50 % | 1.1 / 0.2 | 0.7 GB | 16 % / 17 % |
+| 1080p25 4 s transparent ProRes 4444 | 4.6 s | 21.6 | 16 MB | 72 % | 0.5 / 6.4 | 1.4 GB | 16 % / – |
+| 1080p25 4 s transparent Animation / PNG-MOV | 2.3 / 2.1 s | 43 / 47 | 2.4 / 3.4 MB | 57–60 % | ~0.9 / ≤ 0.3 | 0.4 GB | – |
+| 2160p25 4 s ProRes 422 HQ | 23.6 s | 4.2 | 387 MB | 75 % | 1.1 / 5.1 | 1.1 GB | 11 % / – |
+| 2160p25 4 s transparent ProRes 4444 | 18.1 s | 5.5 | 63 MB | 91 % | 0.8 / 9.8 | 4.9 GB | 8 % / – |
+| 2160p25 4 s H.264 (NVENC) | 22.2 s | 4.5 | 11 MB | 52 % | 1.1 / 0.2 | 1.5 GB | 17 % / 25 % |
+| 60 s preview over 1080p footage, 6 graphics, 960×540 | 11.4 s | 132 | 44 MB | 80 % | 0.4 / 2.5 | 1.3 GB | NVENC 29 % |
+| 60 s preview, 1920×1080 | 36.8 s | 41 | 48 MB | 91 % | 0.6 / 7.1 | 3.6 GB* | NVENC 63 % |
+
+\* Before the composition fix. Frame drawing and transfer, not encoding, limit full-motion renders: NVENC is no
+faster than ProRes at 1080p. Preview composition memory still grows by ~165 MB per 1080p segment (48 segments
+≈ 8 GB); very long timelines should be composed in batches.
+
 ## Performance (Linux container, 4 vCPU, software rendering, no GPU)
 
 | Render (4 s, 100 frames, showcase spec) | Wall time | Throughput | Size |
@@ -294,19 +354,16 @@ over IPC, `getImageData`, and ProRes encoding (single FFmpeg process). Next step
 `MessagePort`/shared-memory transfer, rendering in an `OffscreenCanvas` worker, rendering segments in parallel
 sandboxes, and keeping one warm sandbox between renders (each render opens a new one: ~0.3–0.5 s).
 
-## What still needs Windows validation
+## Still untested
 
-- Everything end to end on Windows 11: sandbox page loading from `file:///C:/…` (URL allow-list), Windows
-  FFmpeg builds, paths with spaces and non-ASCII characters, `%APPDATA%` cache, cancellation with no
-  orphan `ffmpeg.exe`.
-- **NLE compatibility (not verified anywhere)**: ProRes 4444 / Animation / PNG-MOV in Premiere Pro, After
-  Effects, DaVinci Resolve and Final Cut Pro, including straight vs premultiplied alpha, Rec. 709 color
-  match, and frame rate / length.
-- **GPU**: NVENC/QSV/AMF probing and the quality and bitrate of hardware previews.
-- Windows font rendering (DirectWrite through Chromium) and the font-availability probe with real brand fonts.
-- `npm run dev` (sandbox served by Vite): untested.
-- Performance on typical editor hardware, and 4K renders (allowed, untested here).
-- macOS: Homebrew FFmpeg discovery, `h264_videotoolbox`, Final Cut Pro.
+- **NLE compatibility (not verified in any editing application)**: ProRes 4444 / Animation / PNG-MOV in
+  Premiere Pro, After Effects, DaVinci Resolve and Final Cut Pro: alpha interpretation, Rec. 709 colour match,
+  frame rate and length. FFmpeg confirms straight alpha, tags and exact frame counts; the applications have
+  not been checked.
+- Intel QSV and AMD AMF on real hardware; real brand fonts beyond the Windows system fonts.
+- Layer `start`/`end` times are compared without tolerance: a time computed as `frame / 29.97` (a few µs
+  late) starts the layer one frame later than `frame × 1001 / 30000`. Snapping to the frame grid is suggested.
+- Packaged builds; macOS: Homebrew FFmpeg discovery, `h264_videotoolbox`, Final Cut Pro.
 
 ## Deferred
 
