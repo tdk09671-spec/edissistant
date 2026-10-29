@@ -12,6 +12,7 @@ export * from './variety';
 export * from './planner';
 export * from './untrusted';
 export * from './cost';
+export * from './config';
 export * from './modelProvider';
 export * from './compat';
 export * from './adapter';

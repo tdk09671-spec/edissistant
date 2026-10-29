@@ -47,15 +47,17 @@ describe.skipIf(!ffmpeg || !ffprobe)('analyzeReference (real FFmpeg, synthetic v
   let dir: string;
   let video: string;
   beforeAll(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ref-analysis-'));
-    video = path.join(dir, 'reference.mp4');
+    // Spaces and non-ASCII characters, as in real Windows folders ("C:\Users\…\Vidéos\Client refs").
+    dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ref-analysis-')), 'Client refs – vidéo');
+    fs.mkdirSync(dir);
+    video = path.join(dir, 'reference clip.mp4');
     // 4 shots: navy, gold, navy, gold — 1.5 s each, 25 fps. A synthetic stand-in for a dark, gold-accented edit.
     const shots = ['0x0b0f1a', '0xd4a017', '0x0b0f1a', '0xd4a017'];
     const inputs = shots.flatMap((c) => ['-f', 'lavfi', '-i', `color=c=${c}:s=320x180:r=25:d=1.5`]);
     const concat = shots.map((_, i) => `[${i}:v]`).join('') + `concat=n=${shots.length}:v=1:a=0[v]`;
     execFileSync(ffmpeg, ['-v', 'error', '-y', ...inputs, '-filter_complex', concat, '-map', '[v]', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-g', '25', video]);
   });
-  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => fs.rmSync(path.dirname(dir), { recursive: true, force: true }));
 
   it('measures pacing, colours and frames, then reuses the cached analysis', async () => {
     const cacheDir = path.join(dir, 'cache');
@@ -96,4 +98,40 @@ describe.skipIf(!ffmpeg || !ffprobe)('analyzeReference (real FFmpeg, synthetic v
     expect(again.fromCache).toBe(false);
     await expect(analyzeReference({ kind: 'local-file', path: path.join(dir, 'nope.mp4'), role: 'reference-video' }, { ffmpeg, ffprobe, cacheDir })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
+
+  it('cancels promptly, before or during FFmpeg, and caches nothing', async () => {
+    const cacheDir = path.join(dir, 'cache-cancel');
+    const before = new AbortController();
+    before.abort();
+    await expect(analyzeReference({ kind: 'local-file', path: video, role: 'reference-video' }, { ffmpeg, ffprobe, cacheDir, signal: before.signal })).rejects.toMatchObject({ code: 'CANCELLED' });
+
+    const during = new AbortController();
+    const started = Date.now();
+    const job = analyzeReference({ kind: 'local-file', path: video, role: 'reference-video' }, { ffmpeg, ffprobe, cacheDir, frames: 4, signal: during.signal });
+    setTimeout(() => during.abort(), 30);
+    await expect(job).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    const again = await analyzeReference({ kind: 'local-file', path: video, role: 'reference-video' }, { ffmpeg, ffprobe, cacheDir, frames: 4 });
+    expect(again.fromCache).toBe(false);
+  });
+});
+
+// Opt-in check on a reference video the editor owns (Windows validation step). Nothing is written
+// to the repository; the cache goes to a temp folder that is removed afterwards.
+//   PowerShell:  $env:PLANNING_REFERENCE_VIDEO = "C:\path\to\your clip.mp4"; npx vitest run tests/unit/planning/referenceAnalysis.test.ts --silent=false
+const ownVideo = process.env.PLANNING_REFERENCE_VIDEO ?? '';
+describe.skipIf(!ownVideo || !ffmpeg || !ffprobe)('analyzeReference on PLANNING_REFERENCE_VIDEO', () => {
+  it('analyses the editor\'s own file and builds a profile from it', async () => {
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ref-own-'));
+    try {
+      const { analysis } = await analyzeReference({ kind: 'local-file', path: ownVideo, role: 'reference-video' }, { ffmpeg, ffprobe, cacheDir, frames: 6 });
+      expect(analysis.durationSeconds).toBeGreaterThan(0);
+      expect(analysis.frames.length).toBeGreaterThan(0);
+      for (const f of analysis.frames) expect(fs.existsSync(f.path)).toBe(true);
+      const profile = buildStyleProfile({ preset: { ...preset('lumen'), creativeBrief: '', brandColors: [] }, references: [analysis] }, NOW);
+      console.log(JSON.stringify({ duration: analysis.durationSeconds, size: `${analysis.width}x${analysis.height}`, fps: analysis.fps, cuts: analysis.cuts.length, averageShotSeconds: analysis.averageShotSeconds, dominantColors: analysis.dominantColors, energy: profile.motion.value.energy, background: profile.background.value }, null, 2));
+    } finally {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
+  }, 300_000);
 });

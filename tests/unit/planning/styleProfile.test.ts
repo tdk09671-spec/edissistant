@@ -129,5 +129,18 @@ describe('PlanningStore profiles', () => {
     fs.writeFileSync(path.join(dir, 'style-profiles', 'broken.json'), '{nope');
     expect(store.loadProfile('broken')).toBeNull();
     expect(() => store.loadProfile('../secrets')).toThrow(/Invalid id/);
+    // Names Windows can't create, or would silently merge with another id.
+    for (const id of ['CON', 'nul', 'aux.json', 'COM1', 'lpt9', 'project.']) expect(() => store.loadProfile(id)).toThrow(/Invalid id/);
+    expect(store.loadProfile('console-intro')).toBeNull(); // only exact device names are refused
+  });
+
+  it('keeps counting recorded spend when one usage line is damaged', () => {
+    const store = new PlanningStore(dir);
+    const entry = { projectId: 'p', task: 'creative-planning', model: 'claude-opus-5-5', segments: 1, attempt: 1, at: NOW, inputTokens: 0, outputTokens: 1000, cacheCreationInputTokens: 0, cacheReadInputTokens: 0, estimatedCost: 0.02, pricingVersion: 'v' } as const;
+    store.appendUsage([entry, entry]);
+    const file = path.join(dir, 'usage', 'p.jsonl');
+    // A half-written line from a crash, and Windows line endings from an editor.
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/\n/g, '\r\n') + '{"projectId":"p","outputTo');
+    expect(store.loadUsage('p')).toHaveLength(2);
   });
 });

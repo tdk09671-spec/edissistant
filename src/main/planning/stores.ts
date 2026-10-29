@@ -4,15 +4,19 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { parsePlanningConfig, type PlanningConfig } from '../../shared/planning/config';
 import type { UsageEntry } from '../../shared/planning/cost';
 import { parseStyleProfile } from '../../shared/planning/styleProfile';
 import { PROJECT_PLAN_SCHEMA, type ClientUsageHistory, type ProjectPlan, type StyleProfile } from '../../shared/planning/types';
 import { effectiveSegment } from '../../shared/planning/approval';
 
 const SAFE = /^[A-Za-z0-9_.-]{1,128}$/;
+/** Device names Windows reserves in any folder, with or without an extension. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 
 function safeName(id: string): string {
-  if (!SAFE.test(id) || id.startsWith('.')) throw new Error(`Invalid id "${id}"`);
+  // Also refuses a trailing dot, which Windows strips (two ids would share one file).
+  if (!SAFE.test(id) || id.startsWith('.') || id.endsWith('.') || WINDOWS_RESERVED.test(id)) throw new Error(`Invalid id "${id}"`);
   return id;
 }
 
@@ -31,8 +35,44 @@ function readJson<T>(file: string): T | null {
   }
 }
 
+/** config.json state: absent (defaults apply), valid, or invalid (with every problem listed). */
+export type ConfigState = { state: 'missing'; file: string } | { state: 'ok'; file: string; config: PlanningConfig } | { state: 'invalid'; file: string; issues: string[] };
+
 export class PlanningStore {
   constructor(private readonly root: string, private readonly keepRevisions = 10) {}
+
+  get configFile(): string {
+    return path.join(this.root, 'config.json');
+  }
+
+  /** Reads <root>/config.json fresh each time, so edits apply on the next run without a restart. */
+  loadConfig(): ConfigState {
+    const file = this.configFile;
+    let text: string;
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { state: 'missing', file };
+      return { state: 'invalid', file, issues: [`Couldn't read the file (${(e as Error).message}).`] };
+    }
+    let raw: unknown;
+    try {
+      // Notepad can save "UTF-8 with BOM"; JSON.parse rejects the BOM.
+      raw = JSON.parse(text.replace(/^\uFEFF/, ''));
+    } catch (e) {
+      return { state: 'invalid', file, issues: [`Not valid JSON (${(e as Error).message}).`] };
+    }
+    const parsed = parsePlanningConfig(raw);
+    return parsed.ok ? { state: 'ok', file, config: parsed.config } : { state: 'invalid', file, issues: parsed.issues };
+  }
+
+  /** Validates and writes config.json (for a future settings screen). Throws with every problem. */
+  saveConfig(config: unknown): PlanningConfig {
+    const parsed = parsePlanningConfig(config);
+    if (!parsed.ok) throw new Error(`Invalid planning config: ${parsed.issues.join(' ')}`);
+    writeJson(this.configFile, parsed.config);
+    return parsed.config;
+  }
 
   private profileFile(id: string): string {
     return path.join(this.root, 'style-profiles', `${safeName(id)}.json`);
@@ -115,15 +155,27 @@ export class PlanningStore {
     }
   }
 
+  /**
+   * Reads the usage log. A damaged line (e.g. half-written when the app was killed) is skipped on its
+   * own, so the rest of the recorded spend still counts towards the project's limits.
+   */
   loadUsage(projectId: string): UsageEntry[] {
+    let text: string;
     try {
-      return fs
-        .readFileSync(path.join(this.root, 'usage', `${safeName(projectId)}.jsonl`), 'utf8')
-        .split('\n')
-        .filter(Boolean)
-        .map((l) => JSON.parse(l) as UsageEntry);
+      text = fs.readFileSync(path.join(this.root, 'usage', `${safeName(projectId)}.jsonl`), 'utf8');
     } catch {
       return [];
     }
+    const entries: UsageEntry[] = [];
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const e = JSON.parse(line) as UsageEntry;
+        if (e && typeof e === 'object' && typeof e.projectId === 'string') entries.push(e);
+      } catch {
+        // skip the damaged line only
+      }
+    }
+    return entries;
   }
 }

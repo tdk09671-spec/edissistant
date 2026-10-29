@@ -61,6 +61,7 @@ export function ingestLink(source: Extract<MediaSource, { kind: 'link' }>): Link
 
 function run(command: string, args: string[], signal?: AbortSignal): Promise<{ code: number | null; stdout: Buffer; stderr: string }> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new PlanningError('CANCELLED', 'Reference analysis was cancelled.'));
     const child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const out: Buffer[] = [];
     let err = '';
