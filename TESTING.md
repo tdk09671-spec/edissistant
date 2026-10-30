@@ -12,9 +12,25 @@ npm run test:e2e  # builds, then drives the real Electron app with Playwright
 
 - **Unit tests** (`tests/unit`, Vitest) cover pure renderer logic. `dataProvider.test.tsx` uses jsdom.
 - **End-to-end tests** (`tests/e2e`, Playwright `_electron`) launch the **built** app (`dist/main/main.js`) through `tests/e2e/launcher.cjs`. The launcher points Electron's `appData`/`userData` at a fresh folder under `test-results/` for each test. It refuses to start unless `EDISSISTANT_TEST_APPDATA` is set to a folder outside the real `appData`, so tests can never read, write or migrate real user data.
-- **Fixtures** (`tests/fixtures`) are synthetic: a 3-second FFmpeg test pattern (`sample.mp4`) and a two-cue `sample.srt`. Never add client media.
+- **Fixtures** (`tests/fixtures`) are synthetic: a 3-second FFmpeg test pattern (`sample.mp4`) and a two-cue `sample.srt`. `tests/fixtures/transcription/` adds 1–2 s FFmpeg tones (`tone.wav`, `tone.mp3`, `clip.mov` with two audio tracks, `no-audio.mp4`), synthetic whisper.cpp JSON output, and `fake-whisper-cli.cjs`, a stand-in for whisper.cpp so tests need no model download. Never add client media.
+- **Transcription tests** (`tests/unit/transcription`) use the real FFmpeg on `PATH` when present; FFmpeg-dependent tests are skipped otherwise.
 - On failure, Playwright keeps a trace and a screenshot in `test-results/` (`npx playwright show-trace <trace.zip>`). An HTML report goes to `playwright-report/`.
 - The E2E tests need a desktop session. Cloud or headless Linux sessions can run `npm run test:unit`, `npm run typecheck` and `npm run build`. Running E2E there would need `xvfb-run` and is untested.
+
+## Test log v3: local transcription (2026-10-28)
+
+Linux cloud container, Node 22.22.0, FFmpeg 6.1.1, Electron 45 (E2E under `xvfb-run -a`). Not yet run on Windows.
+
+| Command | Result |
+| --- | --- |
+| `npm run typecheck` | pass |
+| `npm run build` | pass |
+| `npm run test:unit` | **133/133** (36 existing + 97 new, 0 skipped) |
+| `xvfb-run -a npx playwright test` | **19/19** (18 existing + new `transcription.spec.ts`) |
+
+New unit files: `words`, `sentences`, `exporters`, `whisperCppJson`, `tools`, `cache`, `ffmpeg` (real FFmpeg: MP4, MOV, WAV, MP3, track selection, no-audio, damaged file, cancel), `whisperCpp` (args, device detection, GPU→CPU fallback, error mapping, kill on cancel), `service` (end-to-end with real FFmpeg and the stand-in engine: progress, cache, cancellation, cleanup), `rendererAdapter` (segments, IPC wrapper).
+
+Not tested: real whisper.cpp inference, any GPU, Windows. The full list is in [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md#still-requires-testing-windows-first). `transcription.spec.ts` is skipped on Windows (its stand-in engine is a Node script that needs a shebang).
 
 ## Test log v2 (2026-10-28)
 

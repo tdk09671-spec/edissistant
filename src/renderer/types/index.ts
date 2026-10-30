@@ -1,3 +1,13 @@
+import type {
+  TranscriptionProgress,
+  TranscriptionRequest,
+  TranscriptionResult,
+  TranscriptionSettings,
+  TranscriptionStatus,
+} from '../../shared/transcription/types';
+
+export type * from '../../shared/transcription/types';
+
 export type PresetType = 'product-animation' | 'podcast-trailer' | 'talking-head-intro' | 'custom';
 
 export interface Preset {
@@ -105,6 +115,8 @@ export interface AppSettings {
     endpoint: string;
     model: string;
   };
+  /** Optional local transcription config (no UI yet; edit settings.json). Preserved across saves. */
+  transcription?: TranscriptionSettings;
 }
 
 export interface SecretStatus {
@@ -146,6 +158,13 @@ export interface ElectronAPI {
   openFolder: (folderPath: string) => Promise<boolean>;
   showItemInFolder: (filePath: string) => Promise<boolean>;
   getAppInfo: () => Promise<AppInfo>;
+  getTranscriptionStatus: () => Promise<TranscriptionStatus>;
+  /** `jobId` is chosen by the caller so it can cancel before the promise settles. */
+  transcribe: (jobId: string, request: TranscriptionRequest) => Promise<TranscriptionResult>;
+  cancelTranscription: (jobId: string) => Promise<boolean>;
+  getCachedTranscript: (request: TranscriptionRequest) => Promise<TranscriptionResult | null>;
+  clearTranscriptCache: () => Promise<number>;
+  onTranscriptionProgress: (callback: (progress: TranscriptionProgress) => void) => () => void;
 }
 
 declare global {

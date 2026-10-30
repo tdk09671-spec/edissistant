@@ -6,10 +6,10 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "outDir": "dist/main",
-    "rootDir": "src/main",
+    "outDir": "dist",
+    "rootDir": "src",
     "resolveJsonModule": true
   },
-  "include": ["src/main"],
+  "include": ["src/main", "src/shared"],
   "exclude": ["node_modules"]
 }

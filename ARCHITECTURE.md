@@ -21,7 +21,8 @@
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Build**: Vite builds `src/renderer` into `dist/renderer`, and `tsc -p tsconfig.main.json` compiles `src/main` into `dist/main` (CommonJS/Node16). `package.json` `main` points to `dist/main/main.js`.
+- **Build**: Vite builds `src/renderer` into `dist/renderer`, and `tsc -p tsconfig.main.json` compiles `src/main` and `src/shared` into `dist/main` and `dist/shared` (CommonJS/Node16, `rootDir: src`). `package.json` `main` points to `dist/main/main.js`.
+- **Shared code**: `src/shared/` holds environment-neutral modules (no Node, no DOM) used by both processes. Today that's the transcription contract and logic.
 - **Dev mode**: only with the explicit `--dev` flag (`npm run dev`), which loads `http://localhost:5173`. Otherwise the app loads the built `dist/renderer/index.html`.
 - **Security**: context isolation, no Node in the renderer, a strict CSP in production, and validated arguments on every IPC handler. The renderer can write secrets but never read them back. `shell:openFolder` only opens directories.
 
@@ -34,6 +35,7 @@
 | Secrets | `secrets:status`, `secrets:set`, `secrets:delete` |
 | Files | `dialog:openFiles`, `dialog:openDirectory`, `file:readText` (.srt/.vtt/.txt, ≤5 MB), `file:saveText` (user-chosen path only), `file:exists`, `shell:openFolder`, `shell:showItem` |
 | App | `app:info` |
+| Transcription | `transcription:status`, `transcription:transcribe` (jobId, request → `TranscriptionResult`), `transcription:cancel`, `transcription:getCached`, `transcription:clearCache`, event `transcription:progress` |
 
 The type contract lives in `src/renderer/types/index.ts` (`ElectronAPI`). When you add a channel, update `main.ts`, `preload.ts` **and** that interface together.
 
@@ -51,8 +53,12 @@ The type contract lives in `src/renderer/types/index.ts` (`ElectronAPI`). When y
 | `pages/project/Export.tsx` | CSV/SRT export, render settings (rendering not implemented) |
 | `components/` | App chrome (TitleBar, Sidebar, Layout) and feature components |
 | `components/ui/` | Design-system primitives (Button, Card, Field, Modal, Popover, Toast…) |
-| `lib/` | Pure helpers: `captions.ts` (SRT/VTT parse), `time.ts` (timecode), `project.ts` (segments, media URLs), `catalog.tsx` (built-in presets) |
+| `lib/` | Pure helpers: `captions.ts` (SRT/VTT parse), `time.ts` (timecode), `project.ts` (segments, media URLs), `catalog.tsx` (built-in presets), `transcription.ts` (start/cancel transcription, transcript → segments, JSON/SRT save) |
 | `styles/globals.css` | Tailwind v4 theme tokens |
+
+## Local transcription
+
+`src/main/transcription/` runs FFmpeg (audio extraction) and whisper.cpp's `whisper-cli` (inference) as child processes, one job at a time, with progress, cancellation, GPU→CPU fallback and an on-disk cache in `userData/transcripts`. Types and pure logic (sentence grouping/editing, JSON/SRT export, the whisper.cpp JSON parser) live in `src/shared/transcription/`. No binaries or models ship with or are downloaded by the app. See [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md).
 
 ## Windows-specific handling
 
@@ -73,6 +79,7 @@ These areas have low overlap with each other, so separate branches are unlikely 
 4. **Export**: CSV/SRT output correctness in `pages/project/Export.tsx`.
 5. **Review features**: comments and versions in `pages/project/Review.tsx`.
 6. **Settings**: `pages/Settings.tsx`.
-7. **AI planning integration** (future): a new main-process module plus IPC channels. Coordinate changes to `main.ts`, `preload.ts` and `types/index.ts`.
+7. **Transcription UI** (future): progress, transcript editing and import into segments, built on `lib/transcription.ts`. *Renderer only.*
+8. **AI planning integration** (future): a new main-process module plus IPC channels. Coordinate changes to `main.ts`, `preload.ts` and `types/index.ts`.
 
-**Shared hot spots** (coordinate before parallel edits): `src/main/main.ts`, `src/main/preload.ts`, `src/renderer/types/index.ts`, `state/DataProvider.tsx`, `components/ui/*`, `styles/globals.css`, `package.json`/`package-lock.json`.
+**Shared hot spots** (coordinate before parallel edits): `src/main/main.ts`, `src/main/preload.ts`, `src/renderer/types/index.ts`, `src/shared/*`, `tsconfig*.json`, `state/DataProvider.tsx`, `components/ui/*`, `styles/globals.css`, `package.json`/`package-lock.json`.

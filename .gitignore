@@ -61,6 +61,10 @@ Local State
 # Synthetic test fixtures are the only media allowed in the repo
 !tests/fixtures/*.mp4
 !tests/fixtures/*.srt
+!tests/fixtures/transcription/*.mp4
+!tests/fixtures/transcription/*.mov
+!tests/fixtures/transcription/*.wav
+!tests/fixtures/transcription/*.mp3
 
 # Editor / OS / tool-local
 .claude/settings.local.json
