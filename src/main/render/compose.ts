@@ -1,5 +1,5 @@
 import { cancelled, RenderError } from '../../shared/animation/errors';
-import { fpsString, frameToSeconds, secondsToFrames } from '../../shared/animation/timeline';
+import { fpsRational, fpsString, frameToSeconds, secondsToFrames } from '../../shared/animation/timeline';
 import { runTool } from './process';
 
 export interface CompositionClip {
@@ -26,6 +26,11 @@ export interface CompositionRequest {
   h264Encoder?: string;
 }
 
+const fpsValue = (fps: number) => {
+  const r = fpsRational(fps);
+  return r.num / r.den;
+};
+
 /** Start frame on the timeline, snapped to the sequence frame grid. */
 export function clipStartSeconds(start: number, fps: number): number {
   return frameToSeconds(secondsToFrames(start, fps), fps);
@@ -50,9 +55,16 @@ export function compositionArgs(req: CompositionRequest): string[] {
 
   const pad = req.baseVideo ? 'tpad=stop=-1:stop_mode=add:color=black,' : '';
   const filters: string[] = [`[0:v]${pad}fps=${rate},scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuva444p[base0]`];
+  // Every boundary sits half a frame before the frame it belongs to. Frame times at NTSC rates are
+  // irrational in decimal (frame 484 at 29.97 is 16.14946…s), so an exact boundary written with 6
+  // decimals can round past its own frame and start the graphic one frame late. Half a frame of
+  // margin keeps each boundary on the right frame, and base frame n still picks clip frame n − start.
+  const half = 0.5 / fpsValue(req.fps);
   req.clips.forEach((clip, i) => {
-    const start = clipStartSeconds(clip.start, req.fps).toFixed(6);
-    const end = (clipStartSeconds(clip.start, req.fps) + clip.duration).toFixed(6);
+    const first = clipStartSeconds(clip.start, req.fps);
+    const start = (first - half).toFixed(6);
+    // The clip has frameCount(duration) frames, so it ends on a frame boundary too.
+    const end = (first + frameToSeconds(Math.max(1, secondsToFrames(clip.duration, req.fps)), req.fps) - half).toFixed(6);
     filters.push(`[${i + 1}:v]scale=${w}:${h},format=yuva444p,setpts=PTS-STARTPTS+${start}/TB[clip${i}]`);
     filters.push(`[base${i}][clip${i}]overlay=eof_action=pass:enable='gte(t,${start})*lt(t,${end})'[base${i + 1}]`);
   });

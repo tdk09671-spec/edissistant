@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useProject } from '../ProjectEditor';
 import { VideoPlayerShell, type PlayerHandle } from '../../components/VideoPlayerShell';
 import { SequenceTable } from '../../components/SequenceTable';
+import { PipelineStatus } from '../../components/PipelineStatus';
 import { DirectionPanel, SegmentInspector, SourcePanel } from './Inspector';
 import { useProjectMedia } from './useProjectMedia';
 import { createSegment, getSegments, mediaUrl, segmentAt } from '../../lib/project';
 import { formatClock } from '../../lib/time';
 import {
   Button,
+  ConfirmDialog,
   EmptyState,
   IconButton,
   Menu,
@@ -16,7 +18,7 @@ import {
   cn,
   useToast,
 } from '../../components/ui';
-import { IconDownload, IconFilm, IconInfo, IconMore, IconPlus, IconScissors, IconText, IconTrash, IconUpload } from '../../components/ui/icons';
+import { IconDownload, IconEye, IconFilm, IconInfo, IconMic, IconMore, IconPlay, IconPlus, IconScissors, IconSparkle, IconText, IconTrash, IconUpload } from '../../components/ui/icons';
 import type { Segment, SegmentStatus } from '../../types';
 
 type InspectorTab = 'segment' | 'direction' | 'source';
@@ -39,7 +41,7 @@ function isTyping(target: EventTarget | null) {
 }
 
 export default function Workspace() {
-  const { project, update, fps, selectedSegmentId, setSelectedSegmentId } = useProject();
+  const { project, update, fps, selectedSegmentId, setSelectedSegmentId, pipeline } = useProject();
   const toast = useToast();
   const playerRef = useRef<PlayerHandle>(null);
   const instructionRef = useRef<HTMLTextAreaElement>(null);
@@ -48,9 +50,38 @@ export default function Workspace() {
   const [tab, setTab] = useState<InspectorTab>(project.source ? 'segment' : 'source');
   const [filter, setFilter] = useState<Filter>('all');
   const [split, setSplit] = useState(readSplit);
-  const media = useProjectMedia(project, update, setSelectedSegmentId);
+  const probeSource = pipeline.probeSource;
+  const media = useProjectMedia(project, update, setSelectedSegmentId, useCallback(() => void probeSource(), [probeSource]));
+  const [confirmTranscribe, setConfirmTranscribe] = useState(false);
+  const [view, setView] = useState<'source' | 'preview'>('source');
+  const [previewExists, setPreviewExists] = useState(false);
+  const previewPath = project.render?.previewPath;
+
+  useEffect(() => {
+    if (!previewPath || !window.electronAPI) {
+      setPreviewExists(false);
+      return;
+    }
+    window.electronAPI.fileExists(previewPath).then(setPreviewExists);
+  }, [previewPath]);
+
+  // Show the new preview as soon as a render finishes.
+  const renderedAt = project.render?.renderedAt;
+  useEffect(() => {
+    if (renderedAt) setView('preview');
+  }, [renderedAt]);
+
+  const showingPreview = view === 'preview' && previewExists && Boolean(previewPath);
+  const busy = Boolean(pipeline.job);
 
   const segments = useMemo(() => getSegments(project), [project]);
+  const hasTranscript = segments.some((s) => s.transcript.trim());
+  const approvedGraphics = segments.filter((s) => s.status === 'approved' && s.plan).length;
+
+  const transcribe = () => {
+    if (segments.length) setConfirmTranscribe(true);
+    else void pipeline.transcribe();
+  };
   const numbering = useMemo(() => new Map(segments.map((s, i) => [s.id, i + 1])), [segments]);
   const visible = filter === 'all' ? segments : segments.filter((s) => s.status === filter);
   const selectedIndex = segments.findIndex((s) => s.id === selectedSegmentId);
@@ -224,9 +255,24 @@ export default function Workspace() {
         className="grid min-h-[280px] shrink-0 grid-cols-[minmax(0,1fr)_minmax(340px,380px)] gap-4 2xl:grid-cols-[minmax(0,1fr)_440px]"
         style={{ height: `${split * 100}%` }}
       >
+        <div className="relative h-full min-h-0">
+        {previewExists && project.source && (
+          <div className="absolute top-3 left-3 z-10">
+            <SegmentedControl<'source' | 'preview'>
+              label="Viewer"
+              size="sm"
+              value={showingPreview ? 'preview' : 'source'}
+              onChange={setView}
+              options={[
+                { value: 'source', label: 'Source' },
+                { value: 'preview', label: 'Rendered preview' },
+              ]}
+            />
+          </div>
+        )}
         <VideoPlayerShell
           ref={playerRef}
-          src={project.source ? mediaUrl(project.source.path) : null}
+          src={showingPreview ? mediaUrl(previewPath!) : project.source ? mediaUrl(project.source.path) : null}
           fps={fps}
           segments={segments}
           comments={project.comments}
@@ -248,6 +294,7 @@ export default function Workspace() {
             />
           }
         />
+        </div>
 
         <aside className="flex min-h-0 flex-col overflow-hidden rounded-[14px] border border-line bg-surface-2">
           <div className="shrink-0 border-b border-line p-2.5">
@@ -280,11 +327,26 @@ export default function Workspace() {
                 canSplit={canSplit}
                 onPrev={() => move(-1)}
                 onNext={() => move(1)}
+                pipeline={pipeline}
+                buildResult={selected ? project.render?.segments.find((r) => r.segmentId === selected.id) : undefined}
               />
             )}
-            {tab === 'direction' && <DirectionPanel project={project} onNotes={(creativeNotes) => update((p) => ({ ...p, creativeNotes }))} />}
+            {tab === 'direction' && (
+              <DirectionPanel
+                project={project}
+                onNotes={(creativeNotes) => update((p) => ({ ...p, creativeNotes }))}
+                onVariety={(variety) => update((p) => ({ ...p, planning: { ...(p.planning ?? {}), variety } }))}
+              />
+            )}
             {tab === 'source' && (
-              <SourcePanel project={project} onChooseSource={media.chooseSource} onRemoveSource={media.removeSource} onImportCaptions={media.importCaptions} />
+              <SourcePanel
+                project={project}
+                onChooseSource={media.chooseSource}
+                onRemoveSource={media.removeSource}
+                onImportCaptions={media.importCaptions}
+                onTranscribe={transcribe}
+                busy={busy}
+              />
             )}
           </div>
         </aside>
@@ -333,7 +395,20 @@ export default function Workspace() {
               ]}
             />
           )}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="secondary" icon={<IconMic size={15} />} disabled={!project.source || busy || !window.electronAPI} onClick={transcribe}>
+              Transcribe
+            </Button>
+            <Button size="sm" variant="secondary" icon={<IconSparkle size={15} />} disabled={!hasTranscript || busy || !window.electronAPI} onClick={() => void pipeline.suggest()}>
+              Suggest visuals
+            </Button>
+            <Tooltip content={approvedGraphics ? `Render ${approvedGraphics} approved graphic(s) over the source` : 'Approve suggestions to render them'}>
+              <span tabIndex={approvedGraphics ? -1 : 0}>
+                <Button size="sm" variant="secondary" icon={<IconPlay size={15} />} disabled={!project.source || !approvedGraphics || busy || !window.electronAPI} onClick={() => void pipeline.renderPreview()}>
+                  Render preview
+                </Button>
+              </span>
+            </Tooltip>
             <Tooltip
               content={
                 <span className="flex flex-col gap-1">
@@ -370,6 +445,8 @@ export default function Workspace() {
           </div>
         </div>
 
+        {(pipeline.job || pipeline.error || pipeline.notice) && <PipelineStatus pipeline={pipeline} className="m-3 mb-0 shrink-0" />}
+
         <div className={cn('min-h-0 flex-1 overflow-auto', segments.length === 0 && 'flex items-center justify-center')}>
           {segments.length === 0 ? (
             <EmptyState
@@ -377,10 +454,19 @@ export default function Workspace() {
               className="m-4 w-full max-w-xl"
               icon={<IconText size={20} />}
               title="Build your sequence"
-              description="Import an SRT or VTT transcript to create timed segments, or add them one by one at the playhead."
+              description={
+                project.source
+                  ? 'Transcribe the source locally to get one timed segment per sentence, import an SRT or VTT file, or add segments at the playhead.'
+                  : 'Import an SRT or VTT transcript to create timed segments, or add them one by one at the playhead.'
+              }
               action={
                 <>
-                  <Button variant="primary" icon={<IconPlus size={16} />} onClick={addSegment}>
+                  {project.source && (
+                    <Button variant="primary" icon={<IconMic size={16} />} onClick={transcribe} disabled={busy || !window.electronAPI}>
+                      Transcribe source
+                    </Button>
+                  )}
+                  <Button variant={project.source ? 'secondary' : 'primary'} icon={<IconPlus size={16} />} onClick={addSegment}>
                     Add segment
                   </Button>
                   <Button variant="secondary" icon={<IconUpload size={16} />} onClick={media.importCaptions} disabled={!window.electronAPI}>
@@ -410,6 +496,18 @@ export default function Workspace() {
         </div>
       </section>
       {media.dialogs}
+      <ConfirmDialog
+        open={confirmTranscribe}
+        title="Replace the sequence with a new transcript?"
+        description="Transcription creates one segment per sentence. The current segments, their instructions, statuses and plans are replaced. You can undo with Ctrl+Z while the project is open. A file that was transcribed before is not transcribed again."
+        confirmLabel="Transcribe and replace"
+        destructive
+        onCancel={() => setConfirmTranscribe(false)}
+        onConfirm={() => {
+          setConfirmTranscribe(false);
+          void pipeline.transcribe();
+        }}
+      />
     </div>
   );
 }

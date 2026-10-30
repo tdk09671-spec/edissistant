@@ -7,6 +7,9 @@ import type {
 } from '../../shared/transcription/types';
 
 export type * from '../../shared/transcription/types';
+export type * from '../../shared/pipeline/types';
+import type { SegmentBuildResult, SegmentPlanInfo, SegmentWord, PipelineBridgeAPI, RenderTarget, MediaCheck } from '../../shared/pipeline/types';
+import type { VarietyLevel } from '../../shared/planning/types';
 
 export type PresetType = 'product-animation' | 'podcast-trailer' | 'talking-head-intro' | 'custom';
 
@@ -43,9 +46,13 @@ export interface Segment {
   transcript: string;
   visualMode: VisualMode;
   instruction: string;
-  /** Populated only by the AI planning service once integrated. */
+  /** Short summary of the creative plan for this row (concept: reasoning). */
   aiSuggestion: string;
   status: SegmentStatus;
+  /** Word timing from local transcription (seconds on the source timeline). */
+  words?: SegmentWord[];
+  /** The creative plan for this row; set by Suggest visuals and editor decisions. */
+  plan?: SegmentPlanInfo;
 }
 
 export interface ReviewComment {
@@ -73,12 +80,39 @@ export interface ExportSettings {
   frameRate: string;
   destination: string;
   fileName: string;
+  /** Render with a generic font when a brand font isn't installed (otherwise the render stops). */
+  allowFontFallback?: boolean;
 }
 
 export interface SourceMedia {
   path: string;
   name: string;
   duration?: number;
+}
+
+/** The last rendered preview: graphics composited over the source, with its audio. */
+export interface ProjectRenderState {
+  previewPath: string;
+  sourcePath: string;
+  quality: 'preview' | 'final';
+  width: number;
+  height: number;
+  fps: number;
+  duration: number;
+  renderedAt: string;
+  /** Sequence rows rendered in that run / served from the render cache. */
+  rendered: string[];
+  reused: string[];
+  /** Why each row did or didn't produce a graphic. */
+  segments: SegmentBuildResult[];
+}
+
+export interface ExportRecord {
+  id: string;
+  target: RenderTarget;
+  createdAt: string;
+  folder: string;
+  files: MediaCheck[];
 }
 
 export interface Project {
@@ -97,6 +131,12 @@ export interface Project {
   comments?: ReviewComment[];
   versions?: ProjectVersion[];
   exportSettings?: ExportSettings;
+  /** Creative planning options for this project. */
+  planning?: { variety: VarietyLevel; plannedAt?: string; findings?: string[] };
+  /** Where the sequence came from when it was transcribed locally. */
+  transcription?: { transcriptId: string; language: string; model: string; wordTiming: string; createdAt: string; warnings: string[] };
+  render?: ProjectRenderState | null;
+  exports?: ExportRecord[];
 }
 
 export interface AppSettings {
@@ -138,7 +178,7 @@ export interface AppInfo {
 // Render engine bridge methods (src/main/render/ipc.ts).
 import type { RenderBridgeAPI } from '../../shared/animation/api';
 
-export interface ElectronAPI extends RenderBridgeAPI {
+export interface ElectronAPI extends RenderBridgeAPI, PipelineBridgeAPI {
   minimize: () => void;
   maximize: () => void;
   close: () => void;

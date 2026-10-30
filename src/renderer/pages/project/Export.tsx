@@ -4,12 +4,12 @@ import { ExportPanel, exportFormats } from '../../components/ExportPanel';
 import { frameRates, resolutions } from '../../lib/catalog';
 import { segmentsToCsv, segmentsToSrt } from '../../lib/captions';
 import { defaultExportSettings, getSegments, isElectron } from '../../lib/project';
-import { Badge, Button, Card, Field, Input, SectionHeader, SegmentedControl, Select, cn, useToast } from '../../components/ui';
+import { Button, Card, Field, Input, SectionHeader, SegmentedControl, Select, SettingRow, Toggle, cn, useToast } from '../../components/ui';
 import { IconCheck, IconDownload, IconFolder, IconText } from '../../components/ui/icons';
 import type { ExportSettings } from '../../types';
 
 export default function Export() {
-  const { project, update } = useProject();
+  const { project, update, pipeline } = useProject();
   const { settings: appSettings } = useData();
   const toast = useToast();
   const settings = defaultExportSettings(project, appSettings);
@@ -79,7 +79,6 @@ export default function Export() {
                     <span className="flex min-w-0 flex-1 flex-col gap-1">
                       <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                         <span className="text-[14.5px] font-medium text-ink">{f.title}</span>
-                        {transparent && <Badge tone="outline">Alpha not yet supported</Badge>}
                       </span>
                       <span className="text-[13px] leading-relaxed text-ink-3">{f.description}</span>
                       <span className="timecode text-[12.5px] text-ink-3">{f.container}</span>
@@ -123,6 +122,13 @@ export default function Export() {
                   <Input id="export-name" value={settings.fileName} onChange={(e) => set({ fileName: e.target.value.replace(/[\\/:*?"<>|]+/g, '') })} />
                 </Field>
               </div>
+              <SettingRow
+                title="Allow a fallback font"
+                htmlFor="font-fallback"
+                description="When a brand font from the preset isn't installed, render with a generic font instead of stopping. Off by default, so a missing font is never replaced silently."
+              >
+                <Toggle id="font-fallback" label="Allow a fallback font" checked={settings.allowFontFallback === true} onChange={(allowFontFallback) => set({ allowFontFallback })} />
+              </SettingRow>
               <Field label="Destination" hint={appSettings.outputDirectory && !project.exportSettings?.destination ? 'Using the default output folder from Settings.' : undefined}>
                 <div className="flex gap-2">
                   <Input readOnly value={settings.destination} placeholder="Choose a folder" leading={<IconFolder size={16} />} className="min-w-0 flex-1" />
@@ -173,7 +179,7 @@ export default function Export() {
 
         <aside className="min-w-0">
           <div className="lg:sticky lg:top-0">
-            <ExportPanel settings={settings} />
+            <ExportPanel settings={settings} project={project} pipeline={pipeline} />
           </div>
         </aside>
       </div>

@@ -5,7 +5,13 @@ import { Button, ConfirmDialog, Modal, useToast } from '../../components/ui';
 import type { Project } from '../../types';
 
 /** Source media, caption import/export and sequence-level actions for the Edit workspace. */
-export function useProjectMedia(project: Project, update: (fn: (p: Project) => Project) => void, setSelected: (id: string | null) => void) {
+export function useProjectMedia(
+  project: Project,
+  update: (fn: (p: Project) => Project) => void,
+  setSelected: (id: string | null) => void,
+  /** Called after a source is linked (reads its duration and frame rate). */
+  onSourceLinked?: () => void
+) {
   const toast = useToast();
   const api = window.electronAPI;
   const [pendingCues, setPendingCues] = useState<{ cues: CaptionCue[]; file: string; untimed: boolean } | null>(null);
@@ -15,12 +21,14 @@ export function useProjectMedia(project: Project, update: (fn: (p: Project) => P
     if (!api) return;
     const [file] = await api.openFiles({ kind: 'video', title: 'Choose source video' });
     if (!file) return;
-    update((p) => ({ ...p, source: { path: file, name: fileName(file) } }));
+    // A different file invalidates the rendered preview (it was composited over the old footage).
+    update((p) => ({ ...p, source: { path: file, name: fileName(file) }, render: p.render?.sourcePath === file ? p.render : null }));
     toast('Source media linked', { description: fileName(file) });
-  }, [api, update, toast]);
+    onSourceLinked?.();
+  }, [api, update, toast, onSourceLinked]);
 
   const removeSource = useCallback(() => {
-    update((p) => ({ ...p, source: null }));
+    update((p) => ({ ...p, source: null, render: null }));
   }, [update]);
 
   const recordDuration = useCallback(

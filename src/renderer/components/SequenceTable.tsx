@@ -47,7 +47,10 @@ export function SequenceTable({ segments, numbering, fps, selectedId, activeId, 
         {segments.map((segment) => {
           const selected = segment.id === selectedId;
           const active = segment.id === activeId;
-          const mode = visualModeInfo(segment.visualMode);
+          // Until the editor approves it, a planned row shows the suggested mode (marked as such).
+          const suggested = Boolean(segment.plan) && segment.status !== 'approved';
+          const mode = visualModeInfo(segment.plan && suggested ? segment.plan.mode : segment.visualMode);
+          const plan = segment.plan;
           const status = segmentStatusInfo(segment.status);
           return (
             <tr
@@ -95,10 +98,11 @@ export function SequenceTable({ segments, numbering, fps, selectedId, activeId, 
                 </p>
               </td>
               <td className="border-b border-line px-3 py-3.5">
-                <span className="inline-flex items-center gap-2 text-[13px] whitespace-nowrap text-ink-2">
-                  <span className="size-2 shrink-0 rounded-full" style={{ background: mode.color }} />
+                <span className={cn('inline-flex items-center gap-2 text-[13px] whitespace-nowrap', suggested ? 'text-ink-3' : 'text-ink-2')}>
+                  <span className="size-2 shrink-0 rounded-full" style={{ background: mode.color, opacity: suggested ? 0.55 : 1 }} />
                   {mode.label}
                 </span>
+                {suggested && <span className="mt-0.5 block text-[11.5px] text-ink-4">suggested</span>}
               </td>
               <td className="border-b border-line px-3 py-3.5">
                 <p className={cn('line-clamp-2 leading-relaxed', segment.instruction ? 'text-ink' : 'text-ink-4')}>
@@ -106,9 +110,18 @@ export function SequenceTable({ segments, numbering, fps, selectedId, activeId, 
                 </p>
               </td>
               <td className="border-b border-line px-3 py-3.5">
-                <p className={cn('line-clamp-2 leading-relaxed', segment.aiSuggestion ? 'text-ink-2' : 'text-ink-4 italic')}>
-                  {segment.aiSuggestion || 'Awaiting AI planning'}
-                </p>
+                {plan ? (
+                  <div className="flex flex-col gap-0.5" data-testid="row-suggestion">
+                    <p className="truncate font-medium text-ink">{plan.conceptLabel}</p>
+                    <p className="line-clamp-2 text-[12.5px] leading-relaxed text-ink-3">
+                      {plan.stale ? 'Changed after approval: review it' : !plan.renderable ? plan.unsupportedReason : plan.reasoning}
+                    </p>
+                  </div>
+                ) : (
+                  <p className={cn('line-clamp-2 leading-relaxed', segment.aiSuggestion ? 'text-ink-2' : 'text-ink-4 italic')}>
+                    {segment.aiSuggestion || 'Not planned yet'}
+                  </p>
+                )}
               </td>
               <td className="border-b border-line px-3 py-3">
                 <Badge tone={status.tone} dot>

@@ -1,8 +1,15 @@
-/** Formats seconds as HH:MM:SS:FF (SMPTE-style, non-drop) at the given frame rate. */
+import { fpsRational } from '../../shared/animation/timeline';
+
+/**
+ * SMPTE non-drop-frame timecode HH:MM:SS:FF. Frames are counted at the exact rate (29.97 is
+ * 30000/1001), so a timecode always names the real frame at that time; the label uses the nominal
+ * rate (30 for 29.97), as NLEs do for non-drop timecode.
+ */
 export function formatTimecode(seconds: number, fps = 25): string {
   if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
-  const rate = Math.round(fps) || 25;
-  const totalFrames = Math.floor(seconds * rate + 1e-6);
+  const { num, den } = fpsRational(fps > 0 ? fps : 25);
+  const rate = Math.round(num / den) || 25;
+  const totalFrames = Math.floor((seconds * num) / den + 1e-6);
   const frames = totalFrames % rate;
   const totalSeconds = Math.floor(totalFrames / rate);
   const s = totalSeconds % 60;
@@ -41,8 +48,11 @@ export function parseTime(input: string, fps = 25): number | null {
   if (parts.some((p) => !/^\d+(\.\d+)?$/.test(p))) return null;
   const nums = parts.map(Number);
   if (nums.length === 4) {
+    // Non-drop timecode → its frame number → that frame's exact start time at the real rate.
     const [h, m, s, f] = nums;
-    return h * 3600 + m * 60 + s + f / (Math.round(fps) || 25);
+    const { num, den } = fpsRational(fps > 0 ? fps : 25);
+    const rate = Math.round(num / den) || 25;
+    return (((h * 3600 + m * 60 + s) * rate + f) * den) / num;
   }
   if (nums.length === 3) return nums[0] * 3600 + nums[1] * 60 + nums[2];
   if (nums.length === 2) return nums[0] * 60 + nums[1];

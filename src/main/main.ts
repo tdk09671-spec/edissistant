@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import { Readable } from 'stream';
 import { registerRenderEngine } from './render';
 import { migrateLegacyFolder } from './migration';
+import { registerPipeline } from './pipeline';
 import { registerTranscriptionIpc, TranscriptionService, type ServiceSettings } from './transcription';
 
 // Dev mode (Vite dev server) is opt-in via --dev so `npm start` runs the built renderer.
@@ -347,6 +348,14 @@ app.on('before-quit', (event) => {
   transcriptionStopped = true;
   const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000));
   void Promise.race([transcription.cancelAll(), timeout]).finally(() => app.quit());
+});
+
+// --- Creative planning + sequence building (deterministic local planner; Claude only on request) ---
+
+registerPipeline(ipcMain, {
+  userDataPath: app.getPath('userData'),
+  readSettings: () => (readJsonFile(getUserDataPath(SETTINGS_FILE)) || {}) as { ffmpegPath?: string },
+  getApiKey: async () => (await readSecrets()).claudeApiKey ?? null,
 });
 
 // --- Local media protocol ---

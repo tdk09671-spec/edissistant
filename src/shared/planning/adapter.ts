@@ -22,6 +22,11 @@ export interface AdapterOptions {
   includeUnapproved?: boolean;
   /** Let PR #2 fall back to a generic font when a brand font isn't installed. Default false (fail loudly). */
   allowFontFallback?: boolean;
+  /**
+   * Graphics-only deliverable: full-frame graphics get a transparent background (transparent-motion)
+   * so they can be laid over footage in an NLE. Default false (graphics carry their background).
+   */
+  alpha?: boolean;
 }
 
 export type AdapterResult =
@@ -123,8 +128,9 @@ export function captionCues(seg: EffectiveSegment, D: number): { start: number; 
     const flush = (endAt: number) => {
       if (!group.length) return;
       const start = r2(group[0].start);
-      const end = r2(Math.max(start + 0.05, Math.min(D, endAt)));
-      cues.push({ start, end, text: group.map((w) => w.text).join(' '), words: group.map((w) => ({ text: w.text, start: r2(Math.max(start, w.start)), end: r2(Math.min(end, Math.max(w.start, w.end))) })).filter((w) => w.start < end) });
+      // Rounding to 0.01 s can push a cue past the segment (D = 4.165 → 4.17): clamp after rounding.
+      const end = Math.min(D, r2(Math.max(start + 0.05, Math.min(D, endAt))));
+      cues.push({ start, end, text: group.map((w) => w.text).join(' '), words: group.map((w) => ({ text: w.text, start: r2(Math.max(start, w.start)), end: Math.min(end, r2(Math.max(w.start, w.end))) })).filter((w) => w.start < end) });
       group = [];
     };
     for (const w of words) {
@@ -150,7 +156,7 @@ export function captionCues(seg: EffectiveSegment, D: number): { start: number; 
   return chunks.map((c) => {
     const start = r2(t);
     t += (D * c.length) / total;
-    return { start, end: r2(Math.min(D, t)), text: c };
+    return { start, end: Math.min(D, r2(t)), text: c };
   });
 }
 
@@ -478,7 +484,8 @@ export function adaptSegment(seg: EffectiveSegment, profile: StyleProfile, setti
   for (const f of [profile.typography.value.headline, profile.typography.value.body]) {
     if (!f.file && !['sans-serif', 'serif', 'monospace'].includes(f.family)) warnings.push(`Font "${f.family}" must be installed on the render machine${allowFallback ? ' (fallback allowed)' : ''}.`);
   }
-  const mode = built.mode ?? (seg.visualMode === 'captions' ? 'transparent-captions' : profile.background.value === 'over-footage' && seg.visualMode === 'motion-graphics' ? 'transparent-motion' : 'full-motion');
+  const planned = built.mode ?? (seg.visualMode === 'captions' ? 'transparent-captions' : profile.background.value === 'over-footage' && seg.visualMode === 'motion-graphics' ? 'transparent-motion' : 'full-motion');
+  const mode = options.alpha && planned === 'full-motion' ? 'transparent-motion' : planned;
   const spec: AnimationSpecCompat = {
     specVersion: ANIMATION_SPEC_VERSION_COMPAT,
     id: safeId(seg.segmentId),
@@ -488,7 +495,7 @@ export function adaptSegment(seg: EffectiveSegment, profile: StyleProfile, setti
     height: H,
     fps: settings.fps,
     exportMode: mode,
-    background: built.background ?? (mode === 'full-motion' ? background(profile, true) : { type: 'transparent' }),
+    background: options.alpha ? { type: 'transparent' } : (built.background ?? (mode === 'full-motion' ? background(profile, true) : { type: 'transparent' })),
     seed: hash53(`${profile.id}:${seg.segmentId}`) % 2147483647,
     ...(fonts.length || built.images ? { assets: { ...(fonts.length ? { fonts } : {}), ...(built.images ? { images: built.images } : {}) } } : {}),
     // Layers end at the segment end; drop undefined transitions so the spec has no unknown/empty keys.

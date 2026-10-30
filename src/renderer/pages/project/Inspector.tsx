@@ -5,6 +5,7 @@ import { builtInPresets, presetTypeInfo, segmentStatuses, visualModes } from '..
 import { formatClock, formatPrecise, formatTimecode, parseTime } from '../../lib/time';
 import { fileName, isElectron } from '../../lib/project';
 import {
+  Badge,
   Button,
   EmptyState,
   Field,
@@ -12,11 +13,13 @@ import {
   Input,
   Notice,
   SegmentedControl,
+  Select,
   Textarea,
   Tooltip,
-  UnavailableBadge,
   cn,
 } from '../../components/ui';
+import { CONCEPTS } from '../../../shared/planning/concepts';
+import type { Pipeline } from './usePipeline';
 import {
   IconArrowRight,
   IconChevronLeft,
@@ -30,7 +33,7 @@ import {
   IconTrash,
   IconUpload,
 } from '../../components/ui/icons';
-import type { Project, Segment } from '../../types';
+import type { Project, Segment, SegmentBuildResult, VisualMode } from '../../types';
 
 /* ---------- Time input ---------- */
 
@@ -92,6 +95,134 @@ interface SegmentInspectorProps {
   canSplit: boolean;
   onPrev: () => void;
   onNext: () => void;
+  pipeline: Pipeline;
+  /** This row's result in the last rendered preview. */
+  buildResult?: SegmentBuildResult;
+}
+
+const PLAN_STATUS: Record<string, { label: string; tone: 'neutral' | 'success' | 'warning' | 'danger' | 'info' }> = {
+  suggested: { label: 'Suggested', tone: 'info' },
+  edited: { label: 'Edited', tone: 'info' },
+  approved: { label: 'Approved', tone: 'success' },
+  rejected: { label: 'Rejected', tone: 'danger' },
+  'needs-regeneration': { label: 'Needs a new idea', tone: 'warning' },
+};
+
+const BUILD_LABEL: Record<SegmentBuildResult['status'], string> = {
+  renderable: 'Rendered in the last preview',
+  'no-graphic': 'No graphic (stays on the footage)',
+  unsupported: 'Not renderable',
+  'missing-data': 'Missing data',
+  'missing-assets': 'Missing assets',
+  'not-approved': 'Not rendered',
+};
+
+/** The creative plan for one row, with the editor's decisions. */
+function SuggestionPanel({ segment, pipeline, buildResult }: { segment: Segment; pipeline: Pipeline; buildResult?: SegmentBuildResult }) {
+  const plan = segment.plan;
+  const busy = Boolean(pipeline.job);
+  if (!plan) {
+    return (
+      <div className="rounded-[12px] border border-dashed border-line-strong p-4">
+        <div className="flex gap-3">
+          <IconSparkle size={17} className="mt-0.5 shrink-0 text-ink-3" />
+          <p className="text-[13px] leading-relaxed text-ink-3">
+            {segment.transcript.trim()
+              ? 'No suggestion yet. Run Suggest visuals to plan this segment from the client preset. Planning runs locally; no AI service is called.'
+              : 'Add the transcript for this segment to get a suggestion.'}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  const status = PLAN_STATUS[plan.planStatus] ?? PLAN_STATUS.suggested;
+  const approved = plan.planStatus === 'approved' && !plan.stale;
+  return (
+    <div data-testid="suggestion-panel" className="flex flex-col gap-3 rounded-[12px] border border-line bg-surface-1 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-sm font-medium text-ink" data-testid="suggestion-concept">
+          {plan.conceptLabel}
+        </p>
+        <Badge tone={status.tone}>{status.label}</Badge>
+        <span className="ml-auto text-[12px] text-ink-3">{plan.editorChoice ? 'Your choice' : plan.source === 'model' ? 'Claude' : 'Local planner'}</span>
+      </div>
+      <p className="flex items-center gap-2 text-[12.5px] text-ink-3">
+        <span className="size-2 rounded-full" style={{ background: visualModes.find((m) => m.value === plan.mode)?.color }} />
+        {visualModes.find((m) => m.value === plan.mode)?.label} · {plan.meaning}
+      </p>
+      <p className="text-[13.5px] leading-relaxed text-ink-2">{plan.reasoning}</p>
+      {plan.stale && (
+        <Notice tone="signal" icon={<IconInfo size={16} />} title="Changed after approval">
+          {plan.stale} It won't render until you review it.
+        </Notice>
+      )}
+      {!plan.renderable && (
+        <Notice tone="neutral" icon={<IconInfo size={16} />} title="Not a rendered graphic">
+          {plan.unsupportedReason}
+        </Notice>
+      )}
+      {buildResult && buildResult.status !== 'renderable' && buildResult.status !== 'no-graphic' && buildResult.reason && (
+        <p className="text-[12.5px] leading-relaxed text-warning">
+          {BUILD_LABEL[buildResult.status]}: {buildResult.reason}
+        </p>
+      )}
+      {buildResult?.status === 'renderable' && <p className="text-[12.5px] text-success">{BUILD_LABEL.renderable}</p>}
+      {plan.warnings.length > 0 && (
+        <ul className="flex list-disc flex-col gap-1 pl-4 text-[12.5px] leading-relaxed text-ink-3">
+          {plan.warnings.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+      <Field label="Concept" htmlFor="seg-concept">
+        <Select
+          id="seg-concept"
+          value={plan.conceptId}
+          disabled={busy}
+          onChange={(e) => void pipeline.act(segment.id, { type: 'edit', overrides: { conceptId: e.target.value } })}
+        >
+          {CONCEPTS.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
+              {c.components === null ? ' (not renderable)' : ''}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <div className="flex flex-wrap gap-2">
+        {plan.stale ? (
+          <Button size="sm" variant="primary" disabled={busy} onClick={() => void pipeline.act(segment.id, { type: 'acknowledge-change' })}>
+            Keep approval
+          </Button>
+        ) : (
+          <Button size="sm" variant="primary" disabled={busy || approved || plan.planStatus === 'rejected'} onClick={() => void pipeline.act(segment.id, { type: 'approve' })}>
+            {approved ? 'Approved' : 'Approve'}
+          </Button>
+        )}
+        <Button size="sm" variant="secondary" disabled={busy || plan.planStatus === 'rejected'} onClick={() => void pipeline.act(segment.id, { type: 'reject', reason: 'Rejected by the editor' })}>
+          Reject
+        </Button>
+        <Tooltip content="Ask the planner for a different idea for this segment">
+          <span>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<IconSparkle size={14} />}
+              disabled={busy}
+              onClick={async () => {
+                if (plan.planStatus !== 'rejected' && plan.planStatus !== 'needs-regeneration') {
+                  await pipeline.act(segment.id, { type: 'request-regeneration', reason: 'Editor asked for a new idea' });
+                }
+                await pipeline.suggest();
+              }}
+            >
+              New idea
+            </Button>
+          </span>
+        </Tooltip>
+      </div>
+    </div>
+  );
 }
 
 export function SegmentInspector({
@@ -108,6 +239,8 @@ export function SegmentInspector({
   canSplit,
   onPrev,
   onNext,
+  pipeline,
+  buildResult,
 }: SegmentInspectorProps) {
   if (!segment) {
     return (
@@ -172,14 +305,20 @@ export function SegmentInspector({
       <Field label="Visual mode">
         <div role="radiogroup" aria-label="Visual mode" className="grid grid-cols-2 gap-2">
           {visualModes.map((mode) => {
-            const selected = segment.visualMode === mode.value;
+            // A planned row shows the mode its plan renders with; changing it is an editor override.
+            const selected = (segment.plan?.mode ?? segment.visualMode) === mode.value;
             return (
               <button
                 key={mode.value}
                 type="button"
                 role="radio"
                 aria-checked={selected}
-                onClick={() => onChange({ visualMode: mode.value })}
+                disabled={Boolean(segment.plan) && Boolean(pipeline.job)}
+                onClick={() =>
+                  segment.plan
+                    ? !selected && void pipeline.act(segment.id, { type: 'edit', overrides: { visualMode: mode.value as VisualMode } })
+                    : onChange({ visualMode: mode.value })
+                }
                 className={cn(
                   'flex h-11 items-center gap-2.5 rounded-[10px] border px-3 text-[13.5px] font-medium transition-colors',
                   selected ? 'border-line-strong bg-surface-4 text-ink' : 'border-line text-ink-3 hover:border-line-strong hover:text-ink'
@@ -208,19 +347,8 @@ export function SegmentInspector({
         <Textarea id="seg-transcript" rows={3} value={segment.transcript} onChange={(e) => onChange({ transcript: e.target.value })} placeholder="What is said in this segment" />
       </Field>
 
-      <Field label="AI suggestion" action={<UnavailableBadge>Not connected</UnavailableBadge>}>
-        <div className="rounded-[12px] border border-dashed border-line-strong p-4">
-          {segment.aiSuggestion ? (
-            <p className="text-[13.5px] leading-relaxed text-ink-2">{segment.aiSuggestion}</p>
-          ) : (
-            <div className="flex gap-3">
-              <IconSparkle size={17} className="mt-0.5 shrink-0 text-ink-3" />
-              <p className="text-[13px] leading-relaxed text-ink-3">
-                Claude planning isn’t integrated yet. Suggestions will appear here once it is — nothing is generated in this build.
-              </p>
-            </div>
-          )}
-        </div>
+      <Field label="Visual suggestion">
+        <SuggestionPanel segment={segment} pipeline={pipeline} buildResult={buildResult} />
       </Field>
 
       <Field label="Status">
@@ -228,7 +356,7 @@ export function SegmentInspector({
           label="Segment status"
           fullWidth
           value={segment.status}
-          onChange={(status) => onChange({ status })}
+          onChange={(status) => (segment.plan ? void pipeline.setStatus(segment, status) : onChange({ status }))}
           options={segmentStatuses.map((s) => ({ value: s.value, label: s.label }))}
         />
       </Field>
@@ -238,7 +366,15 @@ export function SegmentInspector({
 
 /* ---------- Creative direction ---------- */
 
-export function DirectionPanel({ project, onNotes }: { project: Project; onNotes: (notes: string) => void }) {
+export function DirectionPanel({
+  project,
+  onNotes,
+  onVariety,
+}: {
+  project: Project;
+  onNotes: (notes: string) => void;
+  onVariety: (variety: 'low' | 'balanced' | 'experimental') => void;
+}) {
   const navigate = useNavigate();
   const { presets } = useData();
   const preset = presets.find((p) => p.id === project.presetId) ?? builtInPresets.find((p) => p.id === project.presetId);
@@ -295,6 +431,23 @@ export function DirectionPanel({ project, onNotes }: { project: Project; onNotes
         <Textarea id="project-notes" rows={5} value={project.creativeNotes ?? ''} onChange={(e) => onNotes(e.target.value)} placeholder="e.g. Client wants a slower opening and no music under the first line." />
       </Field>
 
+      <Field
+        label="Creative variety"
+        hint="How strongly the planner avoids repeating concepts. The same transcript and preset always give the same plan; approved choices are never changed."
+      >
+        <SegmentedControl<'low' | 'balanced' | 'experimental'>
+          label="Creative variety"
+          fullWidth
+          value={project.planning?.variety ?? 'balanced'}
+          onChange={onVariety}
+          options={[
+            { value: 'low', label: 'Low' },
+            { value: 'balanced', label: 'Balanced' },
+            { value: 'experimental', label: 'Experimental' },
+          ]}
+        />
+      </Field>
+
       <section>
         <p className="eyebrow">Visual mix</p>
         {segments.length === 0 ? (
@@ -333,11 +486,15 @@ export function SourcePanel({
   onChooseSource,
   onRemoveSource,
   onImportCaptions,
+  onTranscribe,
+  busy,
 }: {
   project: Project;
   onChooseSource: () => void;
   onRemoveSource: () => void;
   onImportCaptions: () => void;
+  onTranscribe: () => void;
+  busy: boolean;
 }) {
   const [missing, setMissing] = useState(false);
   useEffect(() => {
@@ -403,8 +560,19 @@ export function SourcePanel({
         <Button variant="secondary" icon={<IconUpload size={16} />} disabled={!isElectron} onClick={onImportCaptions} className="self-start">
           Import captions…
         </Button>
-        <Notice tone="neutral" icon={<IconSparkle size={16} />} title="Automatic transcription">
-          Not yet available. Speech-to-text will be added with the AI services.
+        <Notice
+          tone="neutral"
+          icon={<IconSparkle size={16} />}
+          title="Local transcription"
+          action={
+            <Button size="sm" variant="secondary" disabled={!isElectron || !project.source || missing || busy} onClick={onTranscribe}>
+              Transcribe
+            </Button>
+          }
+        >
+          {project.transcription
+            ? `Transcribed with whisper.cpp (${project.transcription.model}, ${project.transcription.language}, ${project.transcription.wordTiming} word timing).`
+            : 'Speech-to-text with whisper.cpp on this computer. Nothing is uploaded. Needs whisper-cli and a model (see Settings).'}
         </Notice>
       </section>
     </div>

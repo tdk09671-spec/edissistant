@@ -57,6 +57,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App
   getAppInfo: () => ipcRenderer.invoke('app:info'),
 
+  // End-to-end pipeline: planning, sequence building, media checks
+  probeSource: (mediaPath: string) => ipcRenderer.invoke('pipeline:probeSource', mediaPath),
+  planProject: (request: unknown) => ipcRenderer.invoke('pipeline:plan', request),
+  planAction: (request: unknown) => ipcRenderer.invoke('pipeline:act', request),
+  buildSequence: (request: unknown) => ipcRenderer.invoke('pipeline:build', request),
+  checkMedia: (mediaPath: string) => ipcRenderer.invoke('pipeline:checkMedia', mediaPath),
+
   // Animation rendering (FFmpeg + sandboxed engine)
   getRenderStatus: () => ipcRenderer.invoke('render:status'),
   renderSegment: (jobId: string, spec: unknown, options?: unknown) => ipcRenderer.invoke('render:segment', jobId, spec, options),

@@ -1,0 +1,178 @@
+// Pure conversions between the sequence editor (renderer Segment rows), the creative planner (PR #3)
+// and the animation specs the renderer validates (PR #2). No Electron or Node APIs: unit-tested
+// directly and used by the main-process pipeline service.
+
+import { adaptSegment, planToAnimationSpecs, toSequenceSpec, type AdapterResult, type RenderSettings } from '../planning/adapter';
+import { effectiveSegment, segmentInputHash, type EditorAction } from '../planning/approval';
+import { conceptById } from '../planning/concepts';
+import type { PresetLike } from '../planning/styleProfile';
+import type { ApprovalStatus, PlanningSegmentInput, ProjectPlan, SegmentPlan, StyleProfile, VisualMode } from '../planning/types';
+import type { BuildOutcome, PipelineSegment, RenderTarget, SegmentBuildResult, SegmentPlanInfo, SegmentUpdate, UiSegmentStatus, UiVisualMode } from './types';
+
+const norm = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}%$€£.]+/gu, ' ')
+    .replace(/\.(?!\d)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** True when word timing still describes the row's text (the editor hasn't rewritten it). */
+export function wordsMatchText(words: readonly { text: string }[] | undefined, text: string): boolean {
+  if (!words?.length) return false;
+  return norm(words.map((w) => w.text).join(' ')) === norm(text);
+}
+
+/**
+ * Sequence rows → planner inputs. Rows without a transcript or with no duration are skipped.
+ * The row's visual mode is deliberately not passed: an editor's mode choice reaches the planner as
+ * an explicit edit, so writing an approved plan back to the row never looks like a new input.
+ */
+export function toPlanningInputs(segments: readonly PipelineSegment[]): PlanningSegmentInput[] {
+  return [...segments]
+    .filter((s) => s.transcript.trim() && s.end > s.start)
+    .sort((a, b) => a.start - b.start)
+    .map((s) => ({
+      id: s.id,
+      start: s.start,
+      end: s.end,
+      text: s.transcript.trim(),
+      ...(s.instruction.trim() ? { instruction: s.instruction.trim() } : {}),
+      ...(wordsMatchText(s.words, s.transcript) ? { words: s.words!.map((w) => ({ text: w.text, start: w.start, end: w.end })) } : {}),
+    }));
+}
+
+/** The preset the style profile is built from; project notes are read like the creative brief. */
+export function presetWithNotes(preset: PresetLike, notes?: string): PresetLike {
+  const extra = notes?.trim();
+  return extra ? { ...preset, creativeBrief: [preset.creativeBrief.trim(), extra].filter(Boolean).join('\n') } : preset;
+}
+
+export function uiMode(mode: VisualMode): UiVisualMode {
+  return mode === 'background-graphics' ? 'motion-graphics' : mode;
+}
+
+export function uiStatus(s: Pick<SegmentPlan, 'status' | 'stale'>): UiSegmentStatus {
+  if (s.status === 'approved' && !s.stale) return 'approved';
+  if (s.status === 'approved' || s.status === 'rejected' || s.status === 'needs-regeneration') return 'needs-revision';
+  return 'pending';
+}
+
+export function planInfo(s: SegmentPlan): SegmentPlanInfo {
+  const eff = effectiveSegment(s);
+  const concept = conceptById(eff.conceptId);
+  return {
+    conceptId: eff.conceptId,
+    conceptLabel: concept?.label ?? eff.conceptId,
+    mode: uiMode(eff.visualMode),
+    planStatus: s.status,
+    meaning: s.suggestion.meaning,
+    reasoning: s.suggestion.reasoning,
+    source: s.suggestion.source,
+    ...(s.stale ? { stale: s.stale.reason } : {}),
+    renderable: Boolean(concept && concept.components !== null),
+    ...(concept?.components === null ? { unsupportedReason: concept.unsupportedReason ?? 'Not renderable.' } : {}),
+    editorChoice: Boolean(s.overrides?.conceptId || s.overrides?.visualMode),
+    warnings: s.warnings,
+  };
+}
+
+/** Plan → the fields the sequence table stores. Transcript, timing and instructions are never touched. */
+export function segmentUpdates(plan: ProjectPlan): SegmentUpdate[] {
+  return plan.segments.map((s) => {
+    const info = planInfo(s);
+    const status = uiStatus(s);
+    return {
+      id: s.segmentId,
+      aiSuggestion: `${info.conceptLabel}: ${s.suggestion.reasoning}`,
+      status,
+      ...(status === 'approved' ? { visualMode: info.mode } : {}),
+      plan: info,
+    };
+  });
+}
+
+/**
+ * The editor action that moves a planned segment to the status picked in the UI, or null when the
+ * status is already there or the move isn't a planning decision.
+ */
+export function actionForStatus(current: Pick<SegmentPlanInfo, 'planStatus' | 'stale'>, target: UiSegmentStatus): EditorAction | null {
+  const status: ApprovalStatus = current.planStatus;
+  if (target === 'approved') {
+    if (status === 'approved') return current.stale ? { type: 'acknowledge-change' } : null;
+    if (status === 'rejected') return null;
+    return { type: 'approve' };
+  }
+  if (target === 'needs-revision') return status === 'needs-regeneration' || status === 'rejected' ? null : { type: 'request-regeneration', reason: 'Marked for revision' };
+  // Back to pending: keep the suggestion but drop the approval.
+  return status === 'approved' ? { type: 'edit', overrides: {} } : null;
+}
+
+export function parseResolution(value: string): { width: number; height: number } | null {
+  const m = /^(\d{2,5})x(\d{2,5})$/.exec(value.trim());
+  if (!m) return null;
+  const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+  return { width: even(Number(m[1])), height: even(Number(m[2])) };
+}
+
+function summary(r: AdapterResult): SegmentBuildResult {
+  return r.status === 'renderable'
+    ? { segmentId: r.segmentId, conceptId: r.conceptId, status: r.status, warnings: r.warnings }
+    : { segmentId: r.segmentId, conceptId: r.conceptId, status: r.status, reason: r.reason, warnings: [] };
+}
+
+/** A caption layer for every row with a transcript (independent of the visual plan). */
+function captionResults(inputs: PlanningSegmentInput[], profile: StyleProfile, settings: RenderSettings, allowFontFallback: boolean): AdapterResult[] {
+  return inputs.map((i) =>
+    adaptSegment(
+      { segmentId: i.id, start: i.start, end: i.end, text: i.text, words: i.words, conceptId: 'caption-emphasis', visualMode: 'captions', params: {}, transition: 'fade', status: 'approved' },
+      profile,
+      settings,
+      { allowFontFallback }
+    )
+  );
+}
+
+/**
+ * Adapts the plan, but only for rows whose plan matches what the row says now. A row retimed or
+ * rewritten since planning is reported instead of rendered from outdated plan data.
+ */
+function planResults(plan: ProjectPlan, inputs: PlanningSegmentInput[], profile: StyleProfile, settings: RenderSettings, allowFontFallback: boolean, alpha: boolean): AdapterResult[] {
+  const byId = new Map(inputs.map((i) => [i.id, i]));
+  const current = plan.segments.filter((s) => {
+    const input = byId.get(s.segmentId);
+    if (!input) return false;
+    const hash = segmentInputHash(input);
+    return hash === s.inputHash || hash === s.stale?.inputHash;
+  });
+  const adapted = new Map(planToAnimationSpecs({ ...plan, segments: current }, inputs, profile, settings, { allowFontFallback, alpha }).map((r) => [r.segmentId, r]));
+  const planned = new Map(plan.segments.map((s) => [s.segmentId, s]));
+  return inputs.map(
+    (i): AdapterResult =>
+      adapted.get(i.id) ?? {
+        status: 'not-approved',
+        segmentId: i.id,
+        conceptId: planned.get(i.id) ? effectiveSegment(planned.get(i.id)!).conceptId : 'none',
+        reason: planned.get(i.id) ? 'Changed since it was planned. Run Suggest visuals to update it.' : 'Not planned yet. Run Suggest visuals.',
+      }
+  );
+}
+
+/**
+ * Approved plan → PR #2 SequenceSpec for one deliverable. Only approved, current segments render;
+ * every other row comes back with the reason it doesn't (not approved, unsupported, missing data…).
+ */
+export function buildSequence(
+  plan: ProjectPlan,
+  inputs: PlanningSegmentInput[],
+  profile: StyleProfile,
+  options: { projectId: string; target: RenderTarget; width: number; height: number; fps: number; duration: number; allowFontFallback?: boolean }
+): BuildOutcome {
+  const settings: RenderSettings = { width: options.width, height: options.height, fps: options.fps };
+  const allowFontFallback = options.allowFontFallback === true;
+  const results = options.target === 'captions' ? captionResults(inputs, profile, settings, allowFontFallback) : planResults(plan, inputs, profile, settings, allowFontFallback, options.target === 'alpha');
+  const sequence = toSequenceSpec(`${options.projectId}-${options.target}`, results, settings, options.duration);
+  const specIds: Record<string, string> = {};
+  for (const r of results) if (r.status === 'renderable') specIds[r.spec.id] = r.segmentId;
+  return { sequence, results: results.map(summary), specIds };
+}
