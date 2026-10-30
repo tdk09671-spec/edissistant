@@ -33,6 +33,11 @@ const hasFlite = (() => {
 test.skip(process.platform === 'win32' || !FFMPEG || !FFPROBE || !hasFlite, 'needs FFmpeg with flite, FFprobe and a POSIX shell for the stand-in whisper-cli');
 
 const MEDIA = path.resolve(__dirname, '..', '..', 'test-results', 'pipeline-media');
+// Optional: PIPELINE_DEMO_DIR=/some/folder keeps screenshots, the preview and the exports of the run.
+const DEMO = process.env.PIPELINE_DEMO_DIR;
+async function shot(page: Page, name: string) {
+  if (DEMO) await page.screenshot({ path: path.join(DEMO, `${name}.png`) });
+}
 const VIDEO = path.join(MEDIA, 'trailer.mp4');
 interface Script {
   fps: string;
@@ -146,6 +151,7 @@ test('transcribe → plan → approve → render → export → reopen → revis
   await settle(page);
   await expect(page.getByTestId('row-suggestion')).toHaveCount(script.sentences.length);
   await expect.poll(() => project(userData)?.segments?.every((s) => s.plan && s.status === 'pending')).toBe(true);
+  await shot(page, '1-suggestions');
   const firstPlan = Object.fromEntries(project(userData)!.segments!.map((s) => [s.id, s.plan!.conceptId]));
 
   // 4. Editor decisions: reject one idea and ask for another, approve everything.
@@ -182,6 +188,8 @@ test('transcribe → plan → approve → render → export → reopen → revis
   expect(render.rendered.sort()).toEqual([...graphics].sort());
   expect(render.reused).toEqual([]);
   await expect(page.getByRole('radio', { name: 'Rendered preview' })).toHaveAttribute('aria-checked', 'true');
+  await rows.filter({ hasText: 'We talked to 120 editors' }).click();
+  await shot(page, '2-preview-and-inspector');
 
   const preview = probe(render.previewPath);
   const pv = preview.streams.find((s) => s.codec_type === 'video')!;
@@ -221,6 +229,7 @@ test('transcribe → plan → approve → render → export → reopen → revis
   expect(full.streams.find((s) => s.codec_type === 'audio')).toMatchObject({ codec_name: 'aac' });
   expect(Number(full.format.duration)).toBeCloseTo(script.duration, 0);
 
+  await shot(page, '3-export');
   await page.getByRole('radio', { name: /Transparent motion graphics/ }).click();
   await page.getByRole('button', { name: 'Start render' }).click();
   await settle(page, 10 * 60_000);
@@ -257,7 +266,14 @@ test('transcribe → plan → approve → render → export → reopen → revis
   const instruction = target.plan!.conceptId === 'bar-comparison' ? 'Make it a big number counter.' : 'Show it as bars.';
   await p2.getByLabel('Editor instruction').fill(instruction);
   await expect.poll(() => project(userData)?.segments?.find((s) => s.id === target.id)?.instruction).toBe(instruction);
-  await p2.getByRole('radiogroup', { name: 'Revision status' }).getByRole('radio', { name: 'Approved' }).click();
+  // First click: the planner follows the new instruction and shows the new idea instead of approving it unseen.
+  const status = p2.getByRole('radiogroup', { name: 'Revision status' });
+  await status.getByRole('radio', { name: 'Approved' }).click();
+  await settle(p2);
+  await expect(p2.getByText('New suggestion', { exact: true })).toBeVisible();
+  await expect.poll(() => project(userData)?.segments?.find((s) => s.id === target.id)?.plan?.planStatus).toBe('suggested');
+  // Second click approves what the editor now sees.
+  await status.getByRole('radio', { name: 'Approved' }).click();
   await settle(p2);
   await expect.poll(() => project(userData)?.segments?.find((s) => s.id === target.id)?.plan?.planStatus).toBe('approved');
   const revised = project(userData)!.segments!.find((s) => s.id === target.id)!;
@@ -266,6 +282,12 @@ test('transcribe → plan → approve → render → export → reopen → revis
   await settle(p2, 10 * 60_000);
   await expect.poll(() => project(userData)?.render?.rendered).toEqual([target.id]);
   expect(project(userData)!.render!.reused.sort()).toEqual(graphics.filter((g) => g !== target.id).sort());
+  await shot(p2, '4-review-after-revision');
+  if (DEMO) {
+    fs.copyFileSync(project(userData)!.render!.previewPath, path.join(DEMO, 'preview-after-revision.mp4'));
+    fs.cpSync(out, path.join(DEMO, 'exports'), { recursive: true });
+    fs.writeFileSync(path.join(DEMO, 'project.json'), JSON.stringify(project(userData), null, 2));
+  }
   expect(app.errors).toEqual([]);
   await close(app);
 });

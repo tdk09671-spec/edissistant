@@ -244,6 +244,7 @@ export function usePipeline(
         progress(null, 'Updating the plan…');
         const outcome = unwrap(await api!.planAction({ ...planningInput(project(), presetsRef.current), segmentId, action }));
         update((current) => applyUpdates(current, outcome.updates));
+        if (outcome.deferred) setNotice({ title: 'New suggestion', message: outcome.deferred, tone: 'info' });
       });
     },
     [run, update]

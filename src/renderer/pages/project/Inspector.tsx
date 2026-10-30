@@ -191,9 +191,18 @@ function SuggestionPanel({ segment, pipeline, buildResult }: { segment: Segment;
       </Field>
       <div className="flex flex-wrap gap-2">
         {plan.stale ? (
-          <Button size="sm" variant="primary" disabled={busy} onClick={() => void pipeline.act(segment.id, { type: 'acknowledge-change' })}>
-            Keep approval
-          </Button>
+          <>
+            <Button size="sm" variant="primary" disabled={busy} onClick={() => void pipeline.act(segment.id, { type: 'acknowledge-change' })}>
+              Keep approval
+            </Button>
+            <Tooltip content="Replace the approved idea with a new suggestion for the changed segment">
+              <span>
+                <Button size="sm" variant="secondary" disabled={busy} onClick={() => void pipeline.suggest({ allowReplan: [segment.id] })}>
+                  Re-plan with the change
+                </Button>
+              </span>
+            </Tooltip>
+          </>
         ) : (
           <Button size="sm" variant="primary" disabled={busy || approved || plan.planStatus === 'rejected'} onClick={() => void pipeline.act(segment.id, { type: 'approve' })}>
             {approved ? 'Approved' : 'Approve'}
@@ -572,7 +581,7 @@ export function SourcePanel({
         >
           {project.transcription
             ? `Transcribed with whisper.cpp (${project.transcription.model}, ${project.transcription.language}, ${project.transcription.wordTiming} word timing).`
-            : 'Speech-to-text with whisper.cpp on this computer. Nothing is uploaded. Needs whisper-cli and a model (see Settings).'}
+            : 'Speech-to-text with whisper.cpp on this computer. Nothing is uploaded. Needs whisper-cli and a ggml model (setup: docs/TRANSCRIPTION.md).'}
         </Notice>
       </section>
     </div>

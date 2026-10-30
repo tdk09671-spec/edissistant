@@ -82,6 +82,11 @@ export class PipelineService {
     if (!synced.updates.some((u) => u.id === request.segmentId)) {
       throw new PipelineError('INVALID_ACTION', 'This segment has no transcript to plan yet.');
     }
+    // Bringing the plan up to date produced a new idea for this segment (its text or instruction
+    // changed, or it was rejected): never approve something the editor hasn't seen.
+    if (request.action.type === 'approve' && synced.planned.includes(request.segmentId)) {
+      return { ...synced, deferred: 'This segment has a new suggestion. Review it, then approve.' };
+    }
     let plan;
     try {
       plan = this.planning.act(request.projectId, request.segmentId, request.action);

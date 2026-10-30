@@ -8,6 +8,7 @@ import { comparisonSides } from './content';
 import { conceptById } from './concepts';
 import { ANIMATION_SPEC_VERSION_COMPAT, PR2_ID, type AnimationSpecCompat, type BackgroundCompat, type EasingCompat, type LayerCompat, type SequenceSpecCompat, type TransitionCompat, type TypographyCompat } from './compat';
 import { hash53 } from './hash';
+import { contrastRatio } from './styleProfile';
 import { avoidedBy } from './variety';
 import type { EffectiveSegment, FontStyle, PlanningSegmentInput, ProjectPlan, StyleProfile } from './types';
 
@@ -409,6 +410,9 @@ const BUILDERS: Record<string, (c: Ctx) => Built> = {
   },
   'caption-emphasis': (c) => {
     const cues = captionCues(c.seg, c.D);
+    // Captions sit on the footage with a black stroke, so the highlight must read on dark: a
+    // near-black brand colour (often listed first) would make highlighted words disappear.
+    const onDark = [c.seg.params.accent, ...c.profile.palette.value.accents].find((a) => a && contrastRatio(a, '#000000') >= 4.5) ?? '#ffd166';
     if (!cues.length) return { missing: 'No caption text.', kind: 'missing-data' };
     const words = cues.some((q) => q.words?.length);
     return {
@@ -416,7 +420,7 @@ const BUILDERS: Record<string, (c: Ctx) => Built> = {
       background: { type: 'transparent' },
       layers: [
         { id: 'captions', type: 'captions',
-          props: { cues, style: { typography: { ...c.headline, fontSize: Math.round(c.H * 0.055 * c.scale) }, color: '#ffffff', highlightColor: c.accent, position: { x: 0.5, y: 0.84 }, maxWidth: 0.8, maxLines: 2,
+          props: { cues, style: { typography: { ...c.headline, fontSize: Math.round(c.H * 0.055 * c.scale) }, color: '#ffffff', highlightColor: onDark, position: { x: 0.5, y: 0.84 }, maxWidth: 0.8, maxLines: 2,
             stroke: { color: '#000000', width: Math.max(2, Math.round(c.H * 0.005)) }, shadow: { color: 'rgba(0, 0, 0, 0.5)', blur: 8, offsetY: 3 } },
             animation: { in: c.profile.motion.value.energy === 'energetic' ? 'pop' : 'fade', out: 'fade', highlightWords: words } } },
       ],

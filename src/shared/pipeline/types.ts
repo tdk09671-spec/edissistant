@@ -85,6 +85,8 @@ export interface PlanOutcome {
   findings: PlanFinding[];
   profile: { id: string; revision: number; confidence: number; uncertainties: string[] };
   cost: { calls: number; estimatedCost: number; warnings: string[] };
+  /** Set when the requested decision was held back (e.g. approving a suggestion the editor hasn't seen). */
+  deferred?: string;
 }
 
 export interface ActRequest extends ProjectPlanningInput {
