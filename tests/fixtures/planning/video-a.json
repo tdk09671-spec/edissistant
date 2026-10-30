@@ -1,0 +1,12 @@
+[
+  { "id": "a1", "start": 0.0, "end": 3.2, "text": "Three years ago we were five people in a garage.", "speaker": "Maya Chen" },
+  { "id": "a2", "start": 3.4, "end": 7.0, "text": "Today Northwind serves 1.2 million customers in 40 countries." },
+  { "id": "a3", "start": 7.2, "end": 10.8, "text": "Revenue grew from $2 million in 2021 to $9 million this year." },
+  { "id": "a4", "start": 11.0, "end": 14.5, "text": "Why does that matter for you?" },
+  { "id": "a5", "start": 14.7, "end": 19.2, "text": "First we listen, then we prototype, and finally we ship in two weeks." },
+  { "id": "a6", "start": 19.4, "end": 22.6, "text": "Our customers keep 85% more of their time for creative work." },
+  { "id": "a7", "start": 22.8, "end": 26.0, "text": "Honestly, I was terrified when we launched." },
+  { "id": "a8", "start": 26.2, "end": 30.5, "text": "Compared to agencies, we deliver twice as fast at half the cost." },
+  { "id": "a9", "start": 30.7, "end": 34.0, "text": "The key is that every decision starts with the editor." },
+  { "id": "a10", "start": 34.2, "end": 38.0, "text": "Visit northwind.studio and book a demo today." }
+]
