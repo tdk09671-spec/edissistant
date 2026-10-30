@@ -67,6 +67,7 @@ The app stores its data outside the repository, in Electron's `userData` folder:
 
 ## Further reading
 
+- [docs/RENDERING.md](docs/RENDERING.md): animation spec, local rendering with FFmpeg, alpha formats, caching, Windows setup and test status.
 - [TESTING.md](TESTING.md): test commands, isolation, test log v2.
 - [ARCHITECTURE.md](ARCHITECTURE.md): process model, modules, Windows-specific handling, and areas suited to parallel development.
 - [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md): local transcription engine: setup, API, caching, GPU policy, test status.

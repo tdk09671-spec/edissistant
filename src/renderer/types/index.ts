@@ -135,7 +135,10 @@ export interface AppInfo {
   hardwareAcceleration: boolean;
 }
 
-export interface ElectronAPI {
+// Render engine bridge methods (src/main/render/ipc.ts).
+import type { RenderBridgeAPI } from '../../shared/animation/api';
+
+export interface ElectronAPI extends RenderBridgeAPI {
   minimize: () => void;
   maximize: () => void;
   close: () => void;

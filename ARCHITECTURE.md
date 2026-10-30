@@ -26,6 +26,10 @@
 - **Dev mode**: only with the explicit `--dev` flag (`npm run dev`), which loads `http://localhost:5173`. Otherwise the app loads the built `dist/renderer/index.html`.
 - **Security**: context isolation, no Node in the renderer, a strict CSP in production, and validated arguments on every IPC handler. The renderer can write secrets but never read them back. `shell:openFolder` only opens directories.
 
+### Animation rendering
+
+`src/shared/animation/` holds the animation spec, its validator and the trusted drawing engine (no Node or DOM types, compiled for both processes). `src/main/render/` validates specs, draws frames in a hidden **sandboxed** Chromium window (`render-sandbox.html`, a second Vite entry), encodes them with FFmpeg (ProRes 4444 with alpha by default for transparent output), validates the result with FFprobe, caches it by content hash and composes timeline previews. See [docs/RENDERING.md](docs/RENDERING.md).
+
 ## Main-process IPC surface (`window.electronAPI`)
 
 | Area | Channels |
@@ -33,6 +37,7 @@
 | Window | `window:minimize`, `window:maximize`, `window:close`, `window:isMaximized`, event `window:maximized-changed` |
 | Data | `presets:load/save`, `projects:load/save`, `settings:load/save` (settings never stores `claudeApiKey`) |
 | Secrets | `secrets:status`, `secrets:set`, `secrets:delete` |
+| Rendering | `render:status`, `render:segment`, `render:sequence`, `render:cancel`, `render:export`, `render:clearCache`, event `render:progress` (types: `src/shared/animation/api.ts`) |
 | Files | `dialog:openFiles`, `dialog:openDirectory`, `file:readText` (.srt/.vtt/.txt, ≤5 MB), `file:saveText` (user-chosen path only), `file:exists`, `shell:openFolder`, `shell:showItem` |
 | App | `app:info` |
 | Transcription | `transcription:status`, `transcription:transcribe` (jobId, request → `TranscriptionResult`), `transcription:cancel`, `transcription:getCached`, `transcription:clearCache`, event `transcription:progress` |
