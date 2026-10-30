@@ -322,7 +322,9 @@ Fixed during Windows validation: missing Rec. 709 tags with FFmpeg 7+; a test th
 failures (e.g. > 4096 px) now fall back to `libx264`; an FFmpeg exit while frames were queued surfaced as a raw
 `EPIPE`/`EOF` instead of `ENCODE_FAILED`; preview composition memory (one decoder thread per clip:
 24 × 1080p segments 10.8 → 4.5 GB); `mask.feather` was typed but not supported; keyframe easing semantics
-documented and the fixtures corrected.
+documented and the fixtures corrected. Pre-merge: the sandbox-probe E2E test rendered only 6 s, so the
+render could finish before the cancel arrived (intermittent `ok: true`). It now uses 60 s and passed 20/20
+repeated runs.
 
 ### Editing applications (manual)
 
@@ -339,9 +341,12 @@ synthetic H.264 background plate.
 
 Passed areas: transparency (straight alpha, plate visible through transparent areas), graphic edges (no
 dark or bright halos), visual color match, frame-rate detection, animation timing, and the tested
-playback behavior. Application version numbers were not recorded. Not covered: Final Cut Pro (macOS),
-VP9 WebM in editing applications (a browser format), and source-audio sync inside the applications (the
-FFmpeg measurement above covers it: 0 ms lag).
+playback behavior. In Premiere Pro, the audio waveform of the 60 s preview was also checked against the
+source footage's audio and stayed aligned. That shows the preview keeps the source audio unshifted. It is
+not a lip-sync test: the synthetic source is a continuous tone with no sync markers.
+
+Application version numbers were not recorded. Not covered: Final Cut Pro (macOS), VP9 WebM in editing
+applications (a browser format), and audio alignment in After Effects and Resolve.
 
 ## Performance (Windows 11, Ryzen 7 3800XT, RTX 3070)
 
@@ -388,9 +393,6 @@ sandboxes, and keeping one warm sandbox between renders (each render opens a new
 - **Fractional frame rates: layer start/end edge case.** Layer `start`/`end` times are compared without
   tolerance, so a time computed as `frame / 29.97` (a few µs late) starts the layer one frame later than
   `frame × 1001 / 30000`. Planners and specs should snap times to the frame grid.
-- **Intermittent E2E test**: `rendering.spec.ts` "the render sandbox has no Node…" starts a 6 s preview and
-  expects cancelling it to return `CANCELLED`. If the render finishes first it gets `ok: true`. This is a
-  timing race in the test, not in the engine. A longer probe `duration` (e.g. 60 s) would fix it.
 
 ## Still untested
 

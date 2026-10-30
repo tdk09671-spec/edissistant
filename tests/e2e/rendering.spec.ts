@@ -165,7 +165,8 @@ test('invalid specs are rejected with paths before anything runs', async () => {
 });
 
 test('the render sandbox has no Node, no network, no app API and only a message bridge', async () => {
-  const long: AnimationSpec = { ...spec('showcase'), id: 'long', duration: 6, width: 640, height: 360 };
+  // Long enough to still be running when the cancel arrives; the test never waits for it to finish.
+  const long: AnimationSpec = { ...spec('showcase'), id: 'long', duration: 60, width: 640, height: 360 };
   const pending = render(app.page, long, { quality: 'preview', force: true }, 'sandbox-probe');
   let sandbox: Page | undefined;
   await expect.poll(() => (sandbox = app.app.windows().find((w) => w.url().includes('render-sandbox.html'))) !== undefined, { timeout: 20_000 }).toBe(true);
