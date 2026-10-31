@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Readable } from 'stream';
 import { migrateLegacyFolder } from './migration';
+import { registerTranscriptionIpc, TranscriptionService, type ServiceSettings } from './transcription';
 
 // Dev mode (Vite dev server) is opt-in via --dev so `npm start` runs the built renderer.
 const isDev = !app.isPackaged && process.argv.includes('--dev');
@@ -328,6 +329,24 @@ ipcMain.handle('app:info', () => ({
   videosPath: app.getPath('videos'),
   hardwareAcceleration: startupSettings.hardwareAcceleration !== false,
 }));
+
+// --- Local transcription (FFmpeg + whisper.cpp, runs entirely on this machine) ---
+
+const transcription = new TranscriptionService({
+  userDataPath: app.getPath('userData'),
+  getSettings: () => (readJsonFile(getUserDataPath(SETTINGS_FILE)) || {}) as ServiceSettings,
+});
+registerTranscriptionIpc(ipcMain, transcription);
+// Hold the quit until cancelled jobs have killed their processes and deleted their temp audio
+// (otherwise the WAV, ~115 MB per hour of media, is left in %TEMP%). Give up after 5 s.
+let transcriptionStopped = false;
+app.on('before-quit', (event) => {
+  if (transcriptionStopped || !transcription.hasActiveJobs) return;
+  event.preventDefault();
+  transcriptionStopped = true;
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+  void Promise.race([transcription.cancelAll(), timeout]).finally(() => app.quit());
+});
 
 // --- Local media protocol ---
 

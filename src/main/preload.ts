@@ -40,6 +40,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFolder: (folderPath: string) => ipcRenderer.invoke('shell:openFolder', folderPath),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell:showItem', filePath),
 
+  // Local transcription
+  getTranscriptionStatus: () => ipcRenderer.invoke('transcription:status'),
+  transcribe: (jobId: string, request: unknown) => ipcRenderer.invoke('transcription:transcribe', jobId, request),
+  cancelTranscription: (jobId: string) => ipcRenderer.invoke('transcription:cancel', jobId),
+  getCachedTranscript: (request: unknown) => ipcRenderer.invoke('transcription:getCached', request),
+  clearTranscriptCache: () => ipcRenderer.invoke('transcription:clearCache'),
+  onTranscriptionProgress: (callback: (progress: unknown) => void) => {
+    const listener = (_event: unknown, progress: unknown) => callback(progress);
+    ipcRenderer.on('transcription:progress', listener);
+    return () => {
+      ipcRenderer.removeListener('transcription:progress', listener);
+    };
+  },
+
   // App
   getAppInfo: () => ipcRenderer.invoke('app:info'),
 });
