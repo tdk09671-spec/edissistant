@@ -34,7 +34,9 @@ billing caps.** To cap what Anthropic can charge, also set a spend limit in the 
 2. The dialog shows, **before anything is sent**:
    - **Sent to Anthropic:**
      - The transcript rows that would be sent, with their timing and editor instructions.
-     - A style summary built from the preset's creative brief and branding notes and the project notes (it can quote them), with brand colours and font names. File paths, such as the logo's, are never sent.
+     - **Your own words, word for word, each with its own tick box (ticked by default):** the preset's creative brief, its branding notes, and this project's notes. Each can be previewed. Unticked text is not sent.
+     - **A style summary, always sent:** brand font names and colours, motion and layout traits, and short rules the app took from the preset (it can quote them). The dialog shows it exactly as it will be sent.
+     - File paths (source, logo, references) are never sent.
      - Optional: the preset's reference links (as text; Claude can't open them).
      - Optional: reference images you tick (PNG, JPEG or WebP; about 1,600 input tokens each).
    - **Never sent:**
@@ -43,15 +45,23 @@ billing caps.** To cap what Anthropic can charge, also set a spend limit in the 
      - Other projects.
      - Anything else on the computer.
    - **Cost:**
-     - The estimated cost, and the most it could cost.
+     - **Estimate, before sending:** the expected cost, and the most it could cost.
      - The number of requests, and how many are answered free from earlier identical requests.
-     - What was spent so far on this project and this month, and the limits.
+     - What was spent so far on this project, and this month across all projects.
+     - **Project limit** and **Monthly limit**, each labelled, as you set them.
+     - A warning when the project has passed, or this run would likely pass, your **Warn at** amount.
    - **This project's Claude usage history.**
 3. **Send to Claude** starts one request (more only for long projects: up to 12 rows per request). Every run asks first.
 4. Rows Claude planned are marked **Claude**. Nothing is approved for you: review each row, then approve, edit, reject or ask again.
    - A rejected row goes back to Claude next time, with the rejected concept excluded.
    - An instruction typed on a row ("make it a counter") goes with that row next time.
-5. The notice after a run shows the requests, input and output tokens, and the estimated cost.
+5. The notice after a run shows:
+   - the requests sent;
+   - **input tokens** (everything Anthropic read, with the part read from the prompt cache given separately);
+   - **output tokens**;
+   - the **cost calculated from those counts** at Edissistant's prices.
+   If the project has passed your Warn at amount, the notice is a warning and says so.
+6. The project's usage history, and Settings → Usage, have separate **Input tokens**, **Output tokens** and **Calculated cost** columns. Before sending it's an *estimate*; afterwards it's *calculated* from Anthropic's token counts. Neither is your bill: the Anthropic Console is.
 
 ### What is sent, and what isn't
 - **Which rows are sent:**
@@ -92,6 +102,20 @@ A failed run changes nothing (plan, approvals, renders) and is **never retried a
   - `settings:save` strips any `claudeApiKey`.
   - `planning/config.json` refuses anything that looks like a key.
 - **If the OS can't encrypt** (no `safeStorage`), the key is not stored at all, rather than stored in plain text.
+
+### What the prompt contains
+- **System prompt, cached across requests:**
+  1. The fixed planning instructions and the concept catalog.
+  2. The style summary.
+  3. If any are ticked, the editor's own texts, each in an `<editor_brief kind="creative-brief|branding-notes|project-notes">` block.
+     - They are taken from the same validated request the plan is built from, not from a separate field.
+     - Only `<`, `>` and `&` are entity-encoded, so the wording is otherwise exactly as typed.
+     - Claude is told to follow them where they fit the content, and that they can't change the output format or the concept catalog.
+- **User message:**
+  - The transcript rows (as untrusted data).
+  - Ticked reference links (as untrusted notes).
+  - Ticked images.
+- **Cache key:** changing a ticked text changes the request, so a cached answer for the old wording is never reused.
 
 ### Claude's output is data, never code
 - **Request shape:**
@@ -171,6 +195,7 @@ All mocked, with no network and no real key:
 | --- | --- |
 | `tests/unit/planning/claudeRun.test.ts` | Editor policy: one attempt for rate limit, overload, network, timeout and 5xx; invalid answer: one call, usage recorded, no plan; cache across projects and unchanged projects; estimate; project and monthly limits; cancel; references and brand summary in the prompt; 402 and legacy-400 credit errors; connection test ok / 401 / 404 / network |
 | `tests/unit/pipeline/ai.test.ts` | Provider choice; connection test uses the stored key and returns no key; test cleared on key or model change; config written with other settings kept, bad values refused, invalid file not overwritten; runs refused while local or keyless; estimate → run → no resend; failures change nothing; one run per project; cancel; reference checks (video, fake PNG, size, missing, relative); no key in any file written |
+| `tests/unit/pipeline/ai.test.ts` (round 5) | Ticked brief texts reach the system prompt word for word; unticked texts, unselected images, file paths and the source never do; the style summary shown is the one sent; changing the brief changes the request; Warn at warns before and after a run; the estimate shows the configured project limit; a monthly cap is named as monthly |
 | `tests/e2e/claude.spec.ts` | Real UI, real main process and the real Anthropic SDK against a loopback mock: Settings key save, test, replace, remove, unknown model, limits; Generate with Claude → consent → Claude rows → approve → nothing to resend → usage dashboard → reopen sends nothing; preview and export send nothing (needs FFmpeg); 401 / 402 / 429 / dropped connection / invalid answer change nothing, with no retries; cancel; project limit refuses before sending; the key never appears in the page, any data file or the logs |
 
 ## Windows testing checklist
@@ -226,7 +251,9 @@ Run on Windows 11 with this branch, before any real API call. **Use a placeholde
 - **Real API:**
   - No real request has been made.
   - Not yet confirmed: that the API accepts the request as built, real token counts, prompt-cache hit rates, cost per trailer, and suggestion quality against the local planner.
-- **Windows:** DPAPI storage, no-network behaviour and UI scaling on Windows are untested.
+- **Windows:**
+  - Round 5 (fbd8b9c) verified key storage, the mock Claude flow, privacy safeguards, limits, rendering and export.
+  - The round-5 corrections below still need a Windows retest.
 - **Not wired to Claude yet:**
   - Plain-language instructions the local parser doesn't understand are not sent to Claude on approval.
   - They go with the row on the next Claude run.
@@ -236,3 +263,45 @@ Run on Windows 11 with this branch, before any real API call. **Use a placeholde
 - **Estimates:**
   - They use Edissistant's price table. If Anthropic changes prices, update `pricing` in `config.json`.
   - The Console is the source of truth for charges.
+
+## Known limitations and findings (Windows round 5)
+- **Small windows:** the Sequence table is at least 940 px wide (`min-w-[940px]`, fixed columns). In a narrower panel, for example with the Inspector open on a small screen, it scrolls sideways inside its panel instead of reflowing. This existed before Claude and is not changed here: a proper fix means a responsive table layout, a separate change.
+- **"Send" button missing (investigated):**
+  - The dialog footer can't scroll out of view: it is fixed below a scrolling body.
+  - Two causes were found in the code:
+    1. **A toast covered it.** Toasts sat in the bottom-right corner above every dialog, which is exactly where Send is, for 3.5–6 s after any notification.
+       - Fixed: while a dialog is open, toasts move to the top of the window.
+    2. **By design, Send is replaced by "Open Settings"** when Claude is turned off or no key is stored. A notice says which.
+  - If Send is still missing when neither applies, note what was on screen. Nothing else in the code removes it.
+- **Dependency advisory (GHSA-4528-x5fx-h6hg, joi):**
+  - **Chain:** `wait-on@9.5.1 → joi@18.3.0`. It is a development dependency, used only by the `npm run dev:electron` script to wait for the Vite dev server.
+  - **Exposure in the app:** none. It isn't loaded by the app or the tests, and the vulnerable function (`string().email({ multiple: true })`) isn't used by wait-on.
+  - **Fix:** the lockfile pins joi 18.3.1, a patch release inside wait-on's own `^18.2.9` range with identical dependencies (lockfile-only change). `npm audit` reports 0 vulnerabilities.
+- **Windows E2E secret scan:**
+  - While the app runs, the tests read only Edissistant's own files, because Windows locks some of Chromium's files.
+  - After every Claude test the app is closed and the whole data folder is scanned, Chromium's caches and Local Storage included. The key is searched for in UTF-8 and UTF-16.
+  - A file still locked after 10 s fails the test; nothing is skipped.
+  - A self-test plants a key to prove the scan catches it.
+
+## Windows retest checklist (round 5 corrections)
+1. `npm ci`, `npm run typecheck`, `npm run build`, `npm run test:unit`, `npm run test:e2e` on `feature/claude-planning`.
+   - The 3 earlier E2E failures (locked Chromium files) should be gone.
+   - `claude.spec` now has 7 tests. One renders, so it needs FFmpeg.
+2. **Brief:**
+   - Give a preset a creative brief and branding notes, and a project some notes.
+   - Generate with Claude: each text has its own box, ticked, with a preview. The style summary preview shows the exact text that is always sent.
+   - Untick branding notes. The estimate's input tokens drop a little.
+3. **Reference image:**
+   - Add a broken image to the preset: rename a text file to `.png`.
+   - Tick it in the dialog: an error shows, and the image boxes stay visible.
+   - Untick it: the estimate comes back and Send is enabled.
+4. **Toasts:** with the dialog open, any toast appears at the top right, never over Send.
+5. **Warn at:**
+   - Set **Warn at** to `0.01` and leave the project limit empty.
+   - The dialog shows a warning-amount notice.
+   - With a placeholder key nothing is sent, so the after-run warning is covered by the E2E test and the real experiment.
+6. **Limit labels:**
+   - Set **Project limit** `5` and **Monthly limit** `10`. The dialog shows "Project limit: $5.00" and "Monthly limit: $10.00" separately.
+   - Set **Monthly limit** `0.01`: the refusal names the monthly limit.
+7. **Usage:** Settings → Usage has separate Input tokens, Output tokens and Calculated cost columns.
+8. **Small screen:** the Sequence table limitation above is expected, not a regression.
