@@ -30,7 +30,7 @@ check to require in branch protection.
 | Environment check: `scripts/ci/check-env.mjs` | Fails without FFmpeg + FFprobe (libx264, prores_ks, aac, flite), the Inter font, or when run as root | Report only |
 | Typecheck: `npm run typecheck` (renderer and main) | ✓ | ✓ |
 | Production build: `npm run build` | ✓ | ✓ |
-| Unit tests (Vitest), then `verify-skips.mjs` | ✓ all 431 run except 2 allowed skips | ✓ FFmpeg-dependent files allowed to skip |
+| Unit tests (Vitest), then `verify-skips.mjs` | ✓ everything runs except 2 allowed skips | ✓ FFmpeg-dependent tests allowed to skip |
 | Electron E2E (Playwright `_electron`, real built app), then `verify-skips.mjs` | ✓ all specs, under Xvfb, normal user, sandbox on | ✓ except the 3 FFmpeg specs |
 | `check-tracked-fixtures.mjs`: tests left no untracked files in `tests/` or `scripts/` | ✓ | ✓ |
 | On failure: upload `playwright-report/`, `test-results/` (traces, screenshots), `ci-reports/` | 7 days | 7 days |
@@ -65,8 +65,8 @@ and the engine docs. CI runs the existing suites; it doesn't change them.
 | --- | --- | --- |
 | Linux, unit | `referenceAnalysis` › on `PLANNING_REFERENCE_VIDEO` | Opt-in, needs the editor's own reference video |
 | Linux, unit | `whisperCpp` › Unicode model paths on Windows | Windows only; runs in the Windows job (and must not skip there) |
-| Windows, unit | Any test in: `planning/referenceAnalysis`, `pipeline/flow`, `pipeline/media`, `render/compose`, `render/encoder`, `render/service`, `transcription/ffmpeg`, `transcription/onsets`, `transcription/service` | Need FFmpeg (and some a POSIX shell). About 64 tests; all run on Linux |
-| Windows, E2E | `pipeline.spec`, `transcription.spec`, `rendering.spec` | Need FFmpeg and a POSIX shell; all run on Linux |
+| Windows, unit | Any test in: `planning/referenceAnalysis`, `pipeline/flow`, `pipeline/media`, `render/compose`, `render/encoder`, `render/service`, `transcription/ffmpeg`, `transcription/onsets`, `transcription/service`, `transcription/coverage`, `transcription/onsetScenes` | Need FFmpeg, some with libflite or a POSIX shell. All run on Linux |
+| Windows, E2E | `pipeline.spec`, `transcription.spec`, `rendering.spec`, and the rendering test in `review-instruction.spec` | Need FFmpeg (and a POSIX shell for the stand-in engines); all run on Linux |
 | Linux, E2E | None | |
 
 To allow a new skip, add an entry with a reason. To allow one test, give `"test"` as its full name
@@ -83,8 +83,8 @@ Ubuntu 24.04 container with a warm npm cache. Runner times are estimates, not me
 | apt install FFmpeg, fonts, Xvfb | n/a (preinstalled) | 1–2 min |
 | `npm ci` + Electron download | 5 s (warm cache) | 0.5–1.5 min |
 | Typecheck + build | 3 s | 20–40 s |
-| Unit tests (431) | 11 s | 20–40 s |
-| E2E (34 tests) | 5 min 10 s (`pipeline.spec` 3 min 40 s) | 5–7 min |
+| Unit tests (465) | 15 s | 20–40 s |
+| E2E (37 tests) | 5 min 20 s (`pipeline.spec` about 4 min) | 5–8 min |
 | **Linux job** | | **about 8–12 min** |
 | **Windows job** (no apt; E2E about 40 s of tests) | not run | **about 5–8 min** |
 
