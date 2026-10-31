@@ -104,7 +104,7 @@ export function parseLocalEdit(instruction: string): LocalEditResult {
   if (Object.keys(params).length) overrides.params = params;
 
   // Only filler words left → fully handled. Otherwise show the editor's own words that remain.
-  const meaningful = rest.replace(/\b(?:please|here|this|it|a bit|a little|more|and|then|but|make|the|use|instead|also|of|a|an|to|with|for)\b/gi, ' ').replace(/[^\p{L}\p{N}#]+/gu, ' ').trim();
+  const meaningful = rest.replace(/\b(?:please|here|this|it|a bit|a little|more|and|then|but|make|the|use|instead|also|of|a|an|to|with|for|show|display|turn|into|as|change|switch|graphic|visual)\b/gi, ' ').replace(/[^\p{L}\p{N}#]+/gu, ' ').trim();
   const remainder = meaningful ? rest.replace(/^[\s,;.]*(?:and|then|but)?\s*(?:make it\s+)?/i, '').replace(/[\s,;.]+$/, '').replace(/\s+/g, ' ').trim() : '';
   return { handled: understood.length > 0 && !meaningful, overrides, understood, remainder };
 }

@@ -319,7 +319,18 @@ export interface SegmentPlan {
   /** Concepts the editor rejected for this segment (never suggested again for it). */
   rejectedConcepts: string[];
   /** Set when the input changed after approval; the approval is kept until the editor decides. */
-  stale?: { reason: string; since: string; /** Hash of the changed input, adopted when the editor approves or acknowledges. */ inputHash: string };
+  stale?: {
+    reason: string;
+    since: string;
+    /** Hash of the changed input, adopted when the editor approves or acknowledges. */
+    inputHash: string;
+    /**
+     * Set when the editor's instruction changed after approval: the instruction the approved graphic
+     * was planned with ('' for none). Approving can't adopt such a change; the segment has to be
+     * replanned to apply the instruction, or acknowledged to keep the approved graphic.
+     */
+    instructionFrom?: string;
+  };
   warnings: string[];
   history: StatusChange[];
 }

@@ -516,7 +516,8 @@ export function planToAnimationSpecs(plan: ProjectPlan, inputs: PlanningSegmentI
       return { status: 'not-approved', segmentId: s.segmentId, conceptId: eff.conceptId, reason: `Segment is ${s.status}; approve it before rendering.` };
     }
     if (s.stale && !options.includeUnapproved) {
-      return { status: 'not-approved', segmentId: s.segmentId, conceptId: eff.conceptId, reason: 'The transcript changed after approval; review it first.' };
+      const reason = s.stale.instructionFrom !== undefined ? 'The instruction changed after approval and hasn’t been applied yet.' : 'The transcript changed after approval; review it first.';
+      return { status: 'not-approved', segmentId: s.segmentId, conceptId: eff.conceptId, reason };
     }
     return adaptSegment(eff, profile, settings, options);
   });
