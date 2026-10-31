@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { parsePlanningConfig, type PlanningConfig } from '../../shared/planning/config';
 import type { UsageEntry } from '../../shared/planning/cost';
+import type { ModelReply } from '../../shared/planning/modelProvider';
 import { parseStyleProfile } from '../../shared/planning/styleProfile';
 import { PROJECT_PLAN_SCHEMA, type ClientUsageHistory, type ProjectPlan, type StyleProfile } from '../../shared/planning/types';
 import { effectiveSegment } from '../../shared/planning/approval';
@@ -145,7 +146,34 @@ export class PlanningStore {
     return next;
   }
 
+  // --- response cache: validated model replies by request hash (replies may quote transcript words;
+  // prompts and keys are never stored) ---
+
+  getCachedReply(key: string): ModelReply | null {
+    if (!/^[a-f0-9]{64}$/.test(key)) return null;
+    const r = readJson<ModelReply>(path.join(this.root, 'model-cache', `${key}.json`));
+    return r && typeof r.text === 'string' && r.usage && typeof r.model === 'string' ? r : null;
+  }
+
+  setCachedReply(key: string, reply: ModelReply): void {
+    if (!/^[a-f0-9]{64}$/.test(key)) return;
+    writeJson(path.join(this.root, 'model-cache', `${key}.json`), { text: reply.text, stopReason: reply.stopReason, usage: reply.usage, model: reply.model });
+  }
+
   // --- usage / cost log ---
+
+  /** Project ids with a usage log. */
+  usageProjects(): string[] {
+    try {
+      return fs
+        .readdirSync(path.join(this.root, 'usage'))
+        .filter((f) => f.endsWith('.jsonl'))
+        .map((f) => f.slice(0, -'.jsonl'.length))
+        .filter((id) => SAFE.test(id));
+    } catch {
+      return [];
+    }
+  }
 
   appendUsage(entries: UsageEntry[]): void {
     for (const e of entries) {

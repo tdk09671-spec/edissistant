@@ -16,6 +16,7 @@ export type PlanningErrorCode =
   | 'TRUNCATED'
   | 'INVALID_RESPONSE'
   | 'BUDGET_EXCEEDED'
+  | 'CREDITS'
   | 'APPROVAL_REQUIRED'
   | 'CANCELLED';
 
