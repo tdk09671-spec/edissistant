@@ -8,7 +8,7 @@ import { instructionPending, parseResolution } from '../../shared/pipeline/conve
 import type { PresetLike } from '../../shared/planning/styleProfile';
 import type { MediaCheck, PipelineResult, ProjectPlanningInput, SegmentUpdate, SourceInfo } from '../../shared/pipeline/types';
 import type { Transcript } from '../../shared/transcription';
-import type { AppSettings, Preset, Project, Segment } from '../types';
+import type { AppSettings, Preset, Project, Segment, TimingMode } from '../types';
 import { builtInPresets } from './catalog';
 import { createSegment, defaultExportSettings, getSegments, projectFps } from './project';
 
@@ -113,14 +113,30 @@ export function transcriptRows(transcript: Transcript): Segment[] {
     );
 }
 
+/** Which word timing a transcript ended up with, given whether DTW was asked for. */
+export function timingMode(transcript: Transcript, dtwRequested: boolean): TimingMode {
+  if (transcript.timing?.dtwFallback) return 'dtw-fallback';
+  if (transcript.timing?.source === 'dtw') return 'dtw';
+  return dtwRequested ? 'dtw-unavailable' : 'standard';
+}
+
+export const TIMING_MODE_LABEL: Record<TimingMode, string> = {
+  dtw: 'Word timing: DTW alignment.',
+  'dtw-fallback': 'Word timing: standard. DTW lost speech, so the transcript was made without it (no dialogue lost).',
+  'dtw-unavailable': 'Word timing: standard. DTW was on but isn’t available for this model or whisper build.',
+  standard: 'Word timing: standard.',
+};
+
 /**
  * What the editor needs to hear after transcribing: missing or recovered speech, a DTW fallback,
  * and which rows' starts couldn't be verified (Windows validation round 2: dropped dialogue and
  * unverified starts used to pass without a word).
  */
-export function transcriptionNotice(transcript: Transcript, rows: Segment[], fromCache: boolean): { title: string; message: string; tone: 'success' | 'warning' } {
-  const base = fromCache ? 'Reused the saved transcript of this file (no re-transcription).' : `Language: ${transcript.language} · model ${transcript.engine.model}.`;
-  const serious = transcript.warnings.filter((w) => /returned no text|skipped speech|has no text in the transcript|DTW alignment off|couldn’t be read back/.test(w));
+export function transcriptionNotice(transcript: Transcript, rows: Segment[], fromCache: boolean, dtwRequested = false): { title: string; message: string; tone: 'success' | 'warning' } {
+  const mode = timingMode(transcript, dtwRequested);
+  const base = `${fromCache ? 'Reused the saved transcript of this file (no re-transcription).' : `Language: ${transcript.language} · model ${transcript.engine.model}.`} ${TIMING_MODE_LABEL[mode]}`;
+  // The fallback is already explained by the mode line; other engine problems are listed.
+  const serious = transcript.warnings.filter((w) => /returned no text|skipped speech|has no text in the transcript|DTW alignment off|DTW alignment isn|couldn’t be read back/.test(w) && !(mode === 'dtw-fallback' && /^With DTW alignment/.test(w)));
   const uncertain = rows.flatMap((r, i) => (r.startUncertain ? [i + 1] : []));
   const parts = [base, ...serious];
   if (uncertain.length) {
@@ -130,7 +146,7 @@ export function transcriptionNotice(transcript: Transcript, rows: Segment[], fro
   return {
     title: incomplete ? `Transcribed ${rows.length} segments, but some speech has no text` : `Transcribed ${rows.length} segments`,
     message: parts.join(' '),
-    tone: incomplete || serious.length || uncertain.length ? 'warning' : 'success',
+    tone: incomplete || serious.length || uncertain.length || mode === 'dtw-fallback' || mode === 'dtw-unavailable' ? 'warning' : 'success',
   };
 }
 

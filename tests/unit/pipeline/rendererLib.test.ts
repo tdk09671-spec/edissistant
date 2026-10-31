@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adoptSourceTiming, applyUpdates, changesNotRendered, editorMessage, exportProblems, instructionPending, planningInput, timeline, transcriptionNotice, transcriptRows } from '../../../src/renderer/lib/pipeline';
+import { adoptSourceTiming, applyUpdates, changesNotRendered, editorMessage, exportProblems, instructionPending, planningInput, timeline, timingMode, transcriptionNotice, transcriptRows } from '../../../src/renderer/lib/pipeline';
 import { segmentUpdates } from '../../../src/shared/pipeline/convert';
 import { CreativePlanner } from '../../../src/shared/planning';
 import { toPlanningInputs } from '../../../src/shared/pipeline/convert';
@@ -197,5 +197,27 @@ describe('editor-facing messages', () => {
     expect(editorMessage('FONT_NOT_FOUND', 'The font file for "Brand Sans" could not be loaded (damaged or unsupported).')).toMatch(/“Brand Sans”.*could not be loaded\. Install it, or go to Export → Allow a fallback font\./);
     expect(editorMessage('FONT_NOT_FOUND', 'x')).not.toMatch(/allowFallback/);
     expect(editorMessage('MEDIA_NOT_FOUND', 'Base video not found')).toBe('Base video not found');
+  });
+});
+
+// Round 3 (Task C): the transcript always says which word timing it ended up with.
+describe('word timing mode after transcription', () => {
+  const base = { language: 'en', engine: { model: 'small.en' }, warnings: [] as string[], coverage: { complete: true, gaps: [], recovered: [] }, sentences: [] } as unknown as Transcript;
+  const withTiming = (timing: object, warnings: string[] = []) => ({ ...base, timing, warnings }) as unknown as Transcript;
+
+  it('tells DTW, a DTW fallback, DTW unavailable and standard timing apart', () => {
+    expect(timingMode(withTiming({ source: 'dtw' }), true)).toBe('dtw');
+    expect(timingMode(withTiming({ source: 'tokens', dtwFallback: { reason: 'truncated', dtwEnd: 32 } }), true)).toBe('dtw-fallback');
+    expect(timingMode(withTiming({ source: 'tokens' }), true)).toBe('dtw-unavailable');
+    expect(timingMode(withTiming({ source: 'tokens' }), false)).toBe('standard');
+  });
+
+  it('says so in the notice; a fallback or unavailable DTW is a warning', () => {
+    expect(transcriptionNotice(withTiming({ source: 'dtw' }), [], false, true)).toMatchObject({ tone: 'success', message: expect.stringContaining('Word timing: DTW alignment.') });
+    const fallback = transcriptionNotice(withTiming({ source: 'tokens', dtwFallback: { reason: 'truncated', dtwEnd: 32 } }, ['With DTW alignment, small.en returned no text for speech at 32.9–34.5 s …']), [], false, true);
+    expect(fallback.tone).toBe('warning');
+    expect(fallback.message).toMatch(/DTW lost speech, so the transcript was made without it \(no dialogue lost\)/);
+    expect(transcriptionNotice(withTiming({ source: 'tokens' }), [], false, true)).toMatchObject({ tone: 'warning', message: expect.stringContaining('isn’t available for this model') });
+    expect(transcriptionNotice(withTiming({ source: 'tokens' }), [], false, false)).toMatchObject({ tone: 'success', message: expect.stringContaining('Word timing: standard.') });
   });
 });

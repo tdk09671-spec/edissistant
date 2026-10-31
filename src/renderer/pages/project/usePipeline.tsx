@@ -16,6 +16,7 @@ import {
   PipelineFailure,
   planningInput,
   timeline,
+  timingMode,
   transcriptionNotice,
   transcriptRows,
   unwrap,
@@ -204,7 +205,10 @@ export function usePipeline(
   const transcribe = useCallback(async () => {
     await run('transcribe', async (progress, onCancel) => {
       const mediaPath = await requireSource();
-      const transcription = startTranscription(mediaPath, {}, (p) => progress(p.progress, p.message));
+      // The advanced "precise word timing" setting (off by default). Asked for explicitly, so the
+      // result can say whether DTW was used, fell back, or isn't available.
+      const dtwRequested = settingsRef.current.transcription?.dtwAlignment === true;
+      const transcription = startTranscription(mediaPath, { dtwAlignment: dtwRequested }, (p) => progress(p.progress, p.message));
       onCancel(() => void transcription.cancel());
       const { transcript, fromCache } = await transcription.result;
       const rows = transcriptRows(transcript);
@@ -220,10 +224,11 @@ export function usePipeline(
           wordTiming: transcript.wordTiming,
           createdAt: transcript.createdAt,
           warnings: transcript.warnings,
+          timingMode: timingMode(transcript, dtwRequested),
         },
         source: p.source && transcript.duration ? { ...p.source, duration: p.source.duration ?? transcript.duration } : p.source,
       }));
-      setNotice(transcriptionNotice(transcript, rows, fromCache));
+      setNotice(transcriptionNotice(transcript, rows, fromCache, dtwRequested));
     });
   }, [run, update]);
 

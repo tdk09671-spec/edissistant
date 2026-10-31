@@ -149,10 +149,27 @@ export interface Project {
   /** Creative planning options for this project. */
   planning?: { variety: VarietyLevel; plannedAt?: string; findings?: string[] };
   /** Where the sequence came from when it was transcribed locally. */
-  transcription?: { transcriptId: string; language: string; model: string; wordTiming: string; createdAt: string; warnings: string[] };
+  transcription?: {
+    transcriptId: string;
+    language: string;
+    model: string;
+    wordTiming: string;
+    createdAt: string;
+    warnings: string[];
+    /** Which word timing the transcript ended up with (round 3: shown, never assumed). */
+    timingMode?: TimingMode;
+  };
   render?: ProjectRenderState | null;
   exports?: ExportRecord[];
 }
+
+/**
+ * - dtw: DTW alignment was used.
+ * - dtw-fallback: DTW was asked for but lost speech, so standard timing was used instead.
+ * - dtw-unavailable: DTW was asked for but this model or whisper build can't do it.
+ * - standard: DTW wasn't asked for.
+ */
+export type TimingMode = 'dtw' | 'dtw-fallback' | 'dtw-unavailable' | 'standard';
 
 export interface AppSettings {
   theme: 'dark' | 'light';

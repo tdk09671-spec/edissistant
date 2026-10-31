@@ -4,7 +4,7 @@ import { useData } from '../../state/DataProvider';
 import { builtInPresets, presetTypeInfo, segmentStatuses, visualModes } from '../../lib/catalog';
 import { formatClock, formatPrecise, formatTimecode, parseTime } from '../../lib/time';
 import { fileName, isElectron } from '../../lib/project';
-import { instructionPending } from '../../lib/pipeline';
+import { instructionPending, TIMING_MODE_LABEL } from '../../lib/pipeline';
 import { snapVisualTiming, visualTimingIssue } from '../../../shared/pipeline/convert';
 import { frameToSeconds, secondsToFrames } from '../../../shared/animation/timeline';
 import {
@@ -711,7 +711,7 @@ export function SourcePanel({
           }
         >
           {project.transcription
-            ? `Transcribed with whisper.cpp (${project.transcription.model}, ${project.transcription.language}, ${project.transcription.wordTiming} word timing).`
+            ? `Transcribed with whisper.cpp (${project.transcription.model}, ${project.transcription.language}). ${project.transcription.timingMode ? TIMING_MODE_LABEL[project.transcription.timingMode] : `${project.transcription.wordTiming} word timing.`}`
             : 'Speech-to-text with whisper.cpp on this computer. Nothing is uploaded. Needs whisper-cli and a ggml model (setup: docs/TRANSCRIPTION.md).'}
         </Notice>
       </section>
