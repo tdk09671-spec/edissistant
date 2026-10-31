@@ -96,7 +96,19 @@ export function SequenceTable({ segments, numbering, fps, selectedId, activeId, 
                     )}
                     {formatTimecode(segment.start, fps)}
                   </span>
-                  <span className="text-ink-3">{formatTimecode(segment.end, fps)}</span>
+                  <span className="text-ink-3">
+                    {segment.endUncertain && (
+                      <span data-testid="end-uncertain" className="mr-0.5 text-warning" title="End not verified against the audio: the speech may stop earlier, and a graphic here may run into the pause.">
+                        ≈
+                      </span>
+                    )}
+                    {formatTimecode(segment.end, fps)}
+                  </span>
+                  {segment.visualTiming && (
+                    <span data-testid="visual-adjusted" className="mt-0.5 text-[11px] text-warning" title={`Graphic shown ${formatTimecode(segment.visualTiming.start, fps)} → ${formatTimecode(segment.visualTiming.end, fps)} (adjusted by the editor)`}>
+                      Graphic adjusted
+                    </span>
+                  )}
                 </button>
               </td>
               <td className="border-b border-line px-3 py-3.5">

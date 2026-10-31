@@ -2,7 +2,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { validateSequence } from '../../../src/shared/animation';
+import { frameToSeconds, secondsToFrames, segmentFrames, validateSequence } from '../../../src/shared/animation';
+import { snapVisualTiming, visualTimingIssue } from '../../../src/shared/pipeline/convert';
 import { PipelineService } from '../../../src/main/pipeline/service';
 import type { BuildRequest, PlanOutcome, ProjectPlanningInput } from '../../../src/shared/pipeline/types';
 import { now, preset, transcript } from '../planning/helpers';
@@ -221,5 +222,72 @@ describe('Windows regression: an incompatible concept no longer breaks the whole
       code: 'INVALID_ACTION',
       message: expect.stringMatching(/can't be shown in Captions mode/),
     });
+  });
+});
+
+// Round 3 (Task B): the editor sets a graphic's on-screen in/out separately from the speech timing.
+describe('editor-controlled graphic timing', () => {
+  const RATES = [25, 23.976, 29.97];
+
+  it('snaps to exact frames at 25, 24000/1001 and 30000/1001 and checks the video length', () => {
+    for (const fps of RATES) {
+      const t = snapVisualTiming({ start: 6.2, end: 11.97 }, fps);
+      // Each boundary is the leading edge of the nearest frame (exact rational frame times).
+      expect(t.start).toBe(frameToSeconds(secondsToFrames(t.start, fps), fps));
+      expect(t.end).toBe(frameToSeconds(secondsToFrames(t.end, fps), fps));
+      expect(Math.abs(t.start - 6.2)).toBeLessThanOrEqual(0.5 / fps + 1e-9);
+      expect(Math.abs(t.end - 11.97)).toBeLessThanOrEqual(0.5 / fps + 1e-9);
+      expect(snapVisualTiming(t, fps)).toEqual(t); // idempotent: already on the grid
+    }
+    expect(snapVisualTiming({ start: 1.001, end: 2 }, 29.97).start).toBeCloseTo(30 * 1001 / 30000, 12);
+    expect(visualTimingIssue({ start: 1, end: 2 }, 25, 10)).toBeNull();
+    expect(visualTimingIssue({ start: -0.5, end: 2 }, 25, 10)).toMatch(/before the beginning/);
+    expect(visualTimingIssue({ start: 1, end: 10.5 }, 25, 10)).toMatch(/after the end/);
+    expect(visualTimingIssue({ start: 2, end: 2.01 }, 25, 10)).toMatch(/at least one frame/);
+    expect(visualTimingIssue({ start: 3, end: 2 }, 25, 10)).toMatch(/at least one frame/);
+  });
+
+  it.each(RATES)('at %s fps the built graphic uses the adjusted in/out, frame-exact; nothing else changes and nothing is replanned', async (fps) => {
+    const svc = service();
+    await svc.plan(input());
+    for (const id of ['a2', 'a3', 'a5']) await svc.act({ ...input(), segmentId: id, action: { type: 'approve' } });
+    const req = (segments: ProjectPlanningInput['segments']): BuildRequest => ({ ...input(), segments, target: 'composite', width: 1920, height: 1080, fps, duration: 45 });
+    const before = await svc.build(req(input().segments));
+    const a3 = input().segments.find((s) => s.id === 'a3')!;
+    const visualTiming = { start: a3.start + 0.3137, end: a3.end - 0.5021 };
+    const adjusted = input().segments.map((s) => (s.id === 'a3' ? { ...s, visualTiming } : s));
+    const after = await svc.build(req(adjusted));
+    const spec = (b: typeof before, id: string) => b.sequence.segments.find((x) => b.specIds[x.id] === id)!;
+
+    const snapped = snapVisualTiming(visualTiming, fps);
+    const span = segmentFrames(spec(after, 'a3').start, spec(after, 'a3').duration, fps);
+    expect(span.first).toBe(secondsToFrames(snapped.start, fps));
+    expect(span.end).toBe(secondsToFrames(snapped.end, fps));
+    for (const id of ['a2', 'a5']) expect(spec(after, id)).toEqual(spec(before, id)); // → reused from the render cache
+    expect(spec(after, 'a3')).not.toEqual(spec(before, 'a3'));
+    // The speech timing, transcript and plan are untouched: no replanning, no stale flag.
+    expect(after.updates.find((u) => u.id === 'a3')).toMatchObject({ status: 'approved' });
+    expect(after.updates.find((u) => u.id === 'a3')!.plan.stale).toBeUndefined();
+    expect((await svc.plan(input())).planned).toEqual([]);
+  });
+
+  it('a graphic timing that no longer fits the video is reported for that row and left out; the rest render', async () => {
+    const svc = service();
+    await svc.plan(input());
+    for (const id of ['a2', 'a3']) await svc.act({ ...input(), segmentId: id, action: { type: 'approve' } });
+    const segments = input().segments.map((s) => (s.id === 'a3' ? { ...s, visualTiming: { start: 44, end: 48 } } : s));
+    const built = await svc.build({ ...input(), segments, target: 'composite', width: 1920, height: 1080, fps: 25, duration: 45 });
+    expect(built.results.find((r) => r.segmentId === 'a3')).toMatchObject({ status: 'not-approved', reason: expect.stringMatching(/Graphic timing: .*after the end/) });
+    expect(built.results.find((r) => r.segmentId === 'a2')).toMatchObject({ status: 'renderable' });
+  });
+
+  it('the captions deliverable follows the adjusted timing too', async () => {
+    const svc = service();
+    await svc.plan(input());
+    const a1 = input().segments[0];
+    const segments = input().segments.map((s, i) => (i === 0 ? { ...s, visualTiming: { start: a1.start, end: a1.start + 1 } } : s));
+    const built = await svc.build({ ...input(), segments, target: 'captions', width: 1920, height: 1080, fps: 25, duration: 45 });
+    const cap = built.sequence.segments.find((x) => built.specIds[x.id] === a1.id)!;
+    expect(cap.duration).toBeCloseTo(1, 6);
   });
 });

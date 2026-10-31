@@ -29,6 +29,17 @@ export interface PipelineSegment {
   instruction: string;
   /** Word timing from transcription; ignored once the editor has changed the text. */
   words?: SegmentWord[];
+  /**
+   * The editor's on-screen in/out for this row's graphic (seconds), separate from the speech timing
+   * above. Never a planning input: changing it re-renders the graphic but never replans it.
+   */
+  visualTiming?: VisualTiming;
+}
+
+/** On-screen in/out of a graphic, set by the editor. Snapped to the project's frame grid. */
+export interface VisualTiming {
+  start: number;
+  end: number;
 }
 
 /** The plan for one row, as stored on the project and shown in the sequence table. */

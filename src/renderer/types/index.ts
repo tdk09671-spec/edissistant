@@ -56,6 +56,14 @@ export interface Segment {
    * speech, an overlapping voice, or no clear onset): a graphic here may start early or late.
    */
   startUncertain?: boolean;
+  /** Transcription couldn't verify where this row's speech ends: it may run into the pause. */
+  endUncertain?: boolean;
+  /**
+   * The editor's on-screen in/out for this row's graphic, separate from the speech timing
+   * (start/end), which stays as transcribed. Snapped to the project's frames. Absent = the graphic
+   * follows the speech timing.
+   */
+  visualTiming?: { start: number; end: number; adjustedAt?: string };
   /** The creative plan for this row; set by Suggest visuals and editor decisions. */
   plan?: SegmentPlanInfo;
 }

@@ -5,6 +5,8 @@ import { builtInPresets, presetTypeInfo, segmentStatuses, visualModes } from '..
 import { formatClock, formatPrecise, formatTimecode, parseTime } from '../../lib/time';
 import { fileName, isElectron } from '../../lib/project';
 import { instructionPending } from '../../lib/pipeline';
+import { snapVisualTiming, visualTimingIssue } from '../../../shared/pipeline/convert';
+import { frameToSeconds, secondsToFrames } from '../../../shared/animation/timeline';
 import {
   Badge,
   Button,
@@ -38,7 +40,21 @@ import type { Project, Segment, SegmentBuildResult, VisualMode } from '../../typ
 
 /* ---------- Time input ---------- */
 
-function TimeField({ label, value, fps, onCommit, onFromPlayhead }: { label: string; value: number; fps: number; onCommit: (t: number) => void; onFromPlayhead?: () => void }) {
+function TimeField({
+  label,
+  value,
+  fps,
+  onCommit,
+  onFromPlayhead,
+  playheadTip,
+}: {
+  label: string;
+  value: number;
+  fps: number;
+  onCommit: (t: number) => void;
+  onFromPlayhead?: () => void;
+  playheadTip?: string;
+}) {
   const [text, setText] = useState(formatPrecise(value));
   const [invalid, setInvalid] = useState(false);
   useEffect(() => {
@@ -68,7 +84,7 @@ function TimeField({ label, value, fps, onCommit, onFromPlayhead }: { label: str
         className="timecode min-w-0"
         trailing={
           onFromPlayhead && (
-            <Tooltip content={`Set ${label === 'In' ? 'in' : 'out'} point to playhead (${label === 'In' ? 'I' : 'O'})`}>
+            <Tooltip content={playheadTip ?? `Set ${label === 'In' ? 'in' : 'out'} point to playhead (${label === 'In' ? 'I' : 'O'})`}>
               <IconButton label={`Set ${label} to playhead`} size="sm" onClick={onFromPlayhead}>
                 <IconCrosshair size={16} />
               </IconButton>
@@ -82,8 +98,90 @@ function TimeField({ label, value, fps, onCommit, onFromPlayhead }: { label: str
 
 /* ---------- Segment inspector ---------- */
 
+/**
+ * The graphic's on-screen in/out, separate from the speech timing above (which stays as
+ * transcribed and is what Reset goes back to). Every change snaps to the project's frames with
+ * exact rational math, is checked against the video's length, and re-renders only this graphic.
+ */
+function GraphicTiming({
+  segment,
+  fps,
+  videoDuration,
+  canUsePlayhead,
+  playhead,
+  onChange,
+}: {
+  segment: Segment;
+  fps: number;
+  videoDuration: number;
+  canUsePlayhead: boolean;
+  playhead: number;
+  onChange: (patch: Partial<Segment>) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setError(null), [segment.id]);
+  const adjusted = segment.visualTiming;
+  const current = snapVisualTiming(adjusted ?? { start: segment.start, end: segment.end }, fps);
+  const frame = (t: number) => secondsToFrames(t, fps);
+  const set = (next: { start: number; end: number }) => {
+    const issue = visualTimingIssue(next, fps, videoDuration);
+    if (issue) return setError(issue);
+    setError(null);
+    onChange({ visualTiming: { ...snapVisualTiming(next, fps), adjustedAt: new Date().toISOString() } });
+  };
+  const nudge = (edge: 'start' | 'end', frames: number) => set({ ...current, [edge]: frameToSeconds(frame(current[edge]) + frames, fps) });
+  const nudges = (edge: 'start' | 'end', label: string) => (
+    <div className="flex gap-1">
+      <Button size="sm" variant="ghost" aria-label={`${label} one frame earlier`} onClick={() => nudge(edge, -1)}>
+        −1f
+      </Button>
+      <Button size="sm" variant="ghost" aria-label={`${label} one frame later`} onClick={() => nudge(edge, 1)}>
+        +1f
+      </Button>
+    </div>
+  );
+  return (
+    <section data-testid="graphic-timing" className="flex flex-col gap-2 rounded-[12px] border border-line bg-surface-1 p-4">
+      <div className="flex items-center gap-2">
+        <p className="text-sm font-medium text-ink">On-screen graphic</p>
+        {adjusted ? (
+          <Badge tone="warning">Adjusted</Badge>
+        ) : (
+          <span className="text-[12px] text-ink-3">Follows the speech timing</span>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1">
+          <TimeField label="Graphic in" value={current.start} fps={fps} onCommit={(t) => set({ ...current, start: t })} onFromPlayhead={canUsePlayhead ? () => set({ ...current, start: playhead }) : undefined} playheadTip="Set graphic in to playhead" />
+          {nudges('start', 'Graphic in')}
+        </div>
+        <div className="flex flex-col gap-1">
+          <TimeField label="Graphic out" value={current.end} fps={fps} onCommit={(t) => set({ ...current, end: t })} onFromPlayhead={canUsePlayhead ? () => set({ ...current, end: playhead }) : undefined} playheadTip="Set graphic out to playhead" />
+          {nudges('end', 'Graphic out')}
+        </div>
+      </div>
+      <p data-testid="graphic-timing-frames" className="timecode text-[12.5px] text-ink-3">
+        {formatTimecode(current.start, fps)} → {formatTimecode(current.end, fps)} · {frame(current.end) - frame(current.start)} frames
+      </p>
+      {error && <p className="text-[12.5px] text-danger">{error}</p>}
+      {adjusted && (
+        <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-ink-3">
+          <span className="timecode">
+            Speech {formatTimecode(segment.start, fps)} → {formatTimecode(segment.end, fps)}
+          </span>
+          <Button size="sm" variant="secondary" onClick={() => onChange({ visualTiming: undefined })}>
+            Reset to speech timing
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 interface SegmentInspectorProps {
   segment: Segment | null;
+  /** Length of the source video (seconds), to keep graphic timing inside it; 0 when unknown. */
+  videoDuration?: number;
   index: number;
   total: number;
   fps: number;
@@ -280,6 +378,7 @@ export function SegmentInspector({
   onNext,
   pipeline,
   buildResult,
+  videoDuration = 0,
 }: SegmentInspectorProps) {
   if (!segment) {
     return (
@@ -340,6 +439,8 @@ export function SegmentInspector({
         />
       </div>
       <p className="timecode -mt-3 text-[12.5px] text-ink-3">Duration {formatTimecode(duration, fps)}</p>
+
+      {segment.transcript.trim() && <GraphicTiming segment={segment} fps={fps} videoDuration={videoDuration} canUsePlayhead={canUsePlayhead} playhead={playhead} onChange={onChange} />}
 
       <Field label="Visual mode">
         <div role="radiogroup" aria-label="Visual mode" className="grid grid-cols-2 gap-2">

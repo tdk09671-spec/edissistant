@@ -40,6 +40,13 @@ function segments(v: unknown): PipelineSegment[] {
     if (end < start) throw new Invalid(`segments[${i}] ends before it starts.`);
     const words = s.words === undefined ? undefined : Array.isArray(s.words) && s.words.length <= 2000 ? s.words : null;
     if (words === null) throw new Invalid(`segments[${i}].words must be a list.`);
+    // The editor's on-screen in/out (snapped and checked against the timeline when the sequence is built).
+    let visualTiming: { start: number; end: number } | undefined;
+    if (s.visualTiming !== undefined) {
+      const t = obj(s.visualTiming, `segments[${i}].visualTiming`);
+      visualTiming = { start: num(t.start, `segments[${i}].visualTiming.start`, 0, 86_400), end: num(t.end, `segments[${i}].visualTiming.end`, 0, 86_400) };
+      if (visualTiming.end <= visualTiming.start) throw new Invalid(`segments[${i}].visualTiming must end after it starts.`);
+    }
     return {
       id: str(s.id, `segments[${i}].id`, 128),
       start,
@@ -54,6 +61,7 @@ function segments(v: unknown): PipelineSegment[] {
             }),
           }
         : {}),
+      ...(visualTiming ? { visualTiming } : {}),
     };
   });
 }
@@ -138,6 +146,9 @@ function buildRequest(v: unknown): BuildRequest {
     allowFontFallback: r.allowFontFallback === true,
   };
 }
+
+/** The request validators, exported for tests. */
+export const validators = { segments, planningInput, buildRequest };
 
 function failure(error: unknown): PipelineResult<never> {
   if (error instanceof Invalid) return { ok: false, error: { code: 'INVALID_REQUEST', message: error.message } };

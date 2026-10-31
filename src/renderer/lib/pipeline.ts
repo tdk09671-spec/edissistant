@@ -70,7 +70,15 @@ export function planningInput(project: Project, presets: Preset[]): ProjectPlann
     preset: presetLike(preset),
     notes: project.creativeNotes ?? '',
     variety: project.planning?.variety ?? 'balanced',
-    segments: getSegments(project).map((s) => ({ id: s.id, start: s.start, end: s.end, transcript: s.transcript, instruction: s.instruction, ...(s.words ? { words: s.words } : {}) })),
+    segments: getSegments(project).map((s) => ({
+      id: s.id,
+      start: s.start,
+      end: s.end,
+      transcript: s.transcript,
+      instruction: s.instruction,
+      ...(s.words ? { words: s.words } : {}),
+      ...(s.visualTiming ? { visualTiming: { start: s.visualTiming.start, end: s.visualTiming.end } } : {}),
+    })),
   };
 }
 

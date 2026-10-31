@@ -3,12 +3,31 @@
 // directly and used by the main-process pipeline service.
 
 import { validateAnimationSpec } from '../animation/validate';
+import { frameToSeconds, secondsToFrames } from '../animation/timeline';
 import { adaptSegment, planToAnimationSpecs, toSequenceSpec, type AdapterResult, type RenderSettings } from '../planning/adapter';
 import { effectiveSegment, segmentInputHash, type EditorAction } from '../planning/approval';
 import { conceptById } from '../planning/concepts';
 import type { PresetLike } from '../planning/styleProfile';
 import type { ApprovalStatus, PlanningSegmentInput, ProjectPlan, SegmentPlan, StyleProfile, VisualMode } from '../planning/types';
-import type { BuildOutcome, PipelineSegment, RenderTarget, SegmentBuildResult, SegmentPlanInfo, SegmentUpdate, UiSegmentStatus, UiVisualMode } from './types';
+import type { BuildOutcome, PipelineSegment, RenderTarget, SegmentBuildResult, SegmentPlanInfo, SegmentUpdate, UiSegmentStatus, UiVisualMode, VisualTiming } from './types';
+
+/**
+ * Snaps an on-screen in/out to the project's frame grid with exact rational frame math (29.97 is
+ * 30000/1001): each boundary goes to the nearest frame's leading edge.
+ */
+export function snapVisualTiming(t: VisualTiming, fps: number): VisualTiming {
+  return { start: frameToSeconds(secondsToFrames(t.start, fps), fps), end: frameToSeconds(secondsToFrames(t.end, fps), fps) };
+}
+
+/** Why an on-screen in/out can't be used on this timeline, or null when it can. */
+export function visualTimingIssue(t: VisualTiming, fps: number, duration: number): string | null {
+  if (!Number.isFinite(t.start) || !Number.isFinite(t.end)) return 'The graphic in/out isn’t a valid time.';
+  const s = snapVisualTiming(t, fps);
+  if (s.start < 0) return 'The graphic can’t start before the beginning of the video.';
+  if (duration > 0 && s.end > duration + 1e-6) return 'The graphic can’t end after the end of the video.';
+  if (secondsToFrames(s.end, fps) - secondsToFrames(s.start, fps) < 1) return 'The graphic must be at least one frame long (out after in).';
+  return null;
+}
 
 const norm = (text: string) =>
   text
@@ -136,10 +155,10 @@ function summary(r: AdapterResult): SegmentBuildResult {
 }
 
 /** A caption layer for every row with a transcript (independent of the visual plan). */
-function captionResults(inputs: PlanningSegmentInput[], profile: StyleProfile, settings: RenderSettings, allowFontFallback: boolean): AdapterResult[] {
+function captionResults(inputs: PlanningSegmentInput[], profile: StyleProfile, settings: RenderSettings, allowFontFallback: boolean, visual: Map<string, VisualTiming>): AdapterResult[] {
   return inputs.map((i) =>
     adaptSegment(
-      { segmentId: i.id, start: i.start, end: i.end, text: i.text, words: i.words, conceptId: 'caption-emphasis', visualMode: 'captions', params: {}, transition: 'fade', status: 'approved' },
+      { segmentId: i.id, start: visual.get(i.id)?.start ?? i.start, end: visual.get(i.id)?.end ?? i.end, text: i.text, words: i.words, conceptId: 'caption-emphasis', visualMode: 'captions', params: {}, transition: 'fade', status: 'approved' },
       profile,
       settings,
       { allowFontFallback }
@@ -151,7 +170,7 @@ function captionResults(inputs: PlanningSegmentInput[], profile: StyleProfile, s
  * Adapts the plan, but only for rows whose plan matches what the row says now. A row retimed or
  * rewritten since planning is reported instead of rendered from outdated plan data.
  */
-function planResults(plan: ProjectPlan, inputs: PlanningSegmentInput[], profile: StyleProfile, settings: RenderSettings, allowFontFallback: boolean, alpha: boolean): AdapterResult[] {
+function planResults(plan: ProjectPlan, inputs: PlanningSegmentInput[], profile: StyleProfile, settings: RenderSettings, allowFontFallback: boolean, alpha: boolean, visual: Map<string, VisualTiming>): AdapterResult[] {
   const byId = new Map(inputs.map((i) => [i.id, i]));
   const current = plan.segments.filter((s) => {
     const input = byId.get(s.segmentId);
@@ -159,7 +178,13 @@ function planResults(plan: ProjectPlan, inputs: PlanningSegmentInput[], profile:
     const hash = segmentInputHash(input);
     return hash === s.inputHash || hash === s.stale?.inputHash;
   });
-  const adapted = new Map(planToAnimationSpecs({ ...plan, segments: current }, inputs, profile, settings, { allowFontFallback, alpha }).map((r) => [r.segmentId, r]));
+  // The editor's on-screen in/out replaces the speech timing only here, when the spec is made:
+  // the plan (and its input hash) keeps the speech timing, so moving a graphic never replans it.
+  const timed = current.map((s) => {
+    const v = visual.get(s.segmentId);
+    return v ? { ...s, start: v.start, end: v.end } : s;
+  });
+  const adapted = new Map(planToAnimationSpecs({ ...plan, segments: timed }, inputs, profile, settings, { allowFontFallback, alpha }).map((r) => [r.segmentId, r]));
   const planned = new Map(plan.segments.map((s) => [s.segmentId, s]));
   return inputs.map(
     (i): AdapterResult =>
@@ -180,11 +205,32 @@ export function buildSequence(
   plan: ProjectPlan,
   inputs: PlanningSegmentInput[],
   profile: StyleProfile,
-  options: { projectId: string; target: RenderTarget; width: number; height: number; fps: number; duration: number; allowFontFallback?: boolean }
+  options: {
+    projectId: string;
+    target: RenderTarget;
+    width: number;
+    height: number;
+    fps: number;
+    duration: number;
+    allowFontFallback?: boolean;
+    /** The editor's on-screen in/out per row (see PipelineSegment.visualTiming). */
+    visualTiming?: Readonly<Record<string, VisualTiming>>;
+  }
 ): BuildOutcome {
   const settings: RenderSettings = { width: options.width, height: options.height, fps: options.fps };
   const allowFontFallback = options.allowFontFallback === true;
-  const adapted = options.target === 'captions' ? captionResults(inputs, profile, settings, allowFontFallback) : planResults(plan, inputs, profile, settings, allowFontFallback, options.target === 'alpha');
+  // Snapped to this timeline's frames; one that doesn't fit (e.g. the video got shorter) is
+  // reported for its row and that graphic is left out, never stretched or moved silently.
+  const visual = new Map<string, VisualTiming>();
+  const badTiming = new Map<string, string>();
+  for (const [id, t] of Object.entries(options.visualTiming ?? {})) {
+    const issue = visualTimingIssue(t, options.fps, options.duration);
+    if (issue) badTiming.set(id, issue);
+    else visual.set(id, snapVisualTiming(t, options.fps));
+  }
+  const adapted = (options.target === 'captions' ? captionResults(inputs, profile, settings, allowFontFallback, visual) : planResults(plan, inputs, profile, settings, allowFontFallback, options.target === 'alpha', visual)).map(
+    (r): AdapterResult => (badTiming.has(r.segmentId) && r.status === 'renderable' ? { status: 'not-approved', segmentId: r.segmentId, conceptId: r.conceptId, reason: `Graphic timing: ${badTiming.get(r.segmentId)} Fix it in the Inspector or reset it to the speech timing.` } : r)
+  );
   // PR #2 validates a sequence as a whole: one bad segment would stop every graphic from rendering.
   // Each spec is checked on its own first; a failing one is reported and left out.
   const rejected = new Map<string, string>();

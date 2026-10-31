@@ -323,6 +323,7 @@ export default function Workspace() {
                 index={selectedIndex}
                 total={segments.length}
                 fps={fps}
+                videoDuration={project.source?.duration ?? 0}
                 canUsePlayhead={Boolean(project.source)}
                 playhead={playhead}
                 instructionRef={instructionRef}

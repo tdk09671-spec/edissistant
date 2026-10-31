@@ -182,6 +182,7 @@ export class PipelineService {
       fps: request.fps,
       duration: request.duration,
       allowFontFallback: request.allowFontFallback,
+      visualTiming: Object.fromEntries(request.segments.flatMap((s) => (s.visualTiming ? [[s.id, s.visualTiming]] : []))),
     });
     return { ...built, updates: synced.updates };
   }
