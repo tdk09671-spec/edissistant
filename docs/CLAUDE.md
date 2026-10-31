@@ -34,7 +34,7 @@ billing caps.** To cap what Anthropic can charge, also set a spend limit in the 
 2. The dialog shows, **before anything is sent**:
    - **Sent to Anthropic:**
      - The transcript rows that would be sent, with their timing and editor instructions.
-     - The preset's creative brief and branding notes, brand colours and font names, and the project notes.
+     - A style summary built from the preset's creative brief and branding notes and the project notes (it can quote them), with brand colours and font names. File paths, such as the logo's, are never sent.
      - Optional: the preset's reference links (as text; Claude can't open them).
      - Optional: reference images you tick (PNG, JPEG or WebP; about 1,600 input tokens each).
    - **Never sent:**

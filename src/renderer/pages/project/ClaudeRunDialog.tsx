@@ -177,7 +177,7 @@ export function ClaudeRunDialog({ open, onClose, segmentId }: { open: boolean; o
                   {rows.length} transcript row(s) with their timing and editor instructions
                   {segmentId ? '' : ' (rows planned locally and not yet approved, plus new, changed and rejected rows)'}
                 </li>
-                <li>The creative brief and branding notes of “{preset?.name ?? project.presetName}”, its brand colours and font names, and this project’s notes</li>
+                <li>A style summary built from the creative brief and branding notes of “{preset?.name ?? project.presetName}” and this project’s notes (it can quote them), with brand colours and font names</li>
                 {links.length > 0 && (
                   <li>
                     <Check id="claude-links" checked={sendLinks} onChange={setSendLinks}>
