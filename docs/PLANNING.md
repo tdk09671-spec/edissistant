@@ -140,6 +140,8 @@ with who did it and when.
 | --- | --- |
 | Unchanged segment | Kept byte-identical; no provider call. |
 | Approved, and its transcript changed | **The approval and choice are kept.** The segment is flagged `stale` ("changed after approval") and is not rendered until the editor reviews it. `acknowledge-change` keeps the approval and clears the flag, permanently. |
+| Approved, and its editor instruction changed | Flagged `stale` the same way, with `stale.instructionFrom` holding the instruction the approved graphic was planned with (`''` for none). Later syncs keep it. A plain `approve` is refused, since it would keep the old graphic and drop the request. Replan with `allowReplan: [id]` to apply the instruction, or `acknowledge-change` to keep the approved graphic (history records that the instruction wasn't applied). |
+| Approved and flagged, then changed back | The flag clears: the row matches what was approved again. |
 | Approved, and the editor allows replanning (`allowReplan: [id]`) | Replanned; history says "Replanned with editor permission". |
 | Edited, and its transcript changed | Overrides kept; status becomes `needs-regeneration` for review. |
 | Rejected, or regeneration requested | Replanned; rejected concepts are excluded. |

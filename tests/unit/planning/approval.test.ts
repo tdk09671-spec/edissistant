@@ -105,6 +105,49 @@ describe('replanning', () => {
     expect(seg(again.plan, 'a2').stale).toBeUndefined();
   });
 
+  // Windows validation round 2 (a6fe66f), bug D: editing a segment's instruction after approval and
+  // approving again kept the old graphic. The planner overwrote the plan's instruction when it
+  // flagged the change, so nothing remembered that the editor had asked for something new.
+  it('flags an instruction change after approval and never lets a plain approval drop it', async () => {
+    const p = act(await base(), 'a2', { type: 'approve' });
+    const approved = seg(p, 'a2');
+    const withInstruction = transcript('video-a').map((s) => (s.id === 'a2' ? { ...s, instruction: 'Show it as bars.' } : s));
+    const r = await planner.plan({ projectId: 'p', profile: profile(), segments: withInstruction }, { now, previous: p });
+    const flagged = seg(r.plan, 'a2');
+    expect(r.flagged).toEqual(['a2']);
+    expect(flagged.suggestion).toEqual(approved.suggestion);
+    expect(flagged.instruction).toBe('Show it as bars.');
+    expect(flagged.stale).toMatchObject({ instructionFrom: '', reason: expect.stringMatching(/instruction changed after approval/) });
+
+    // A later sync (e.g. a render build) keeps what the graphic was planned with.
+    const again = await planner.plan({ projectId: 'p', profile: profile(), segments: withInstruction }, { now, previous: r.plan });
+    expect(seg(again.plan, 'a2').stale?.instructionFrom).toBe('');
+
+    // Approving can't adopt it: that would keep the old graphic and drop the instruction.
+    expect(() => applyEditorAction(seg(again.plan, 'a2'), { type: 'approve' }, at)).toThrow(/instruction changed/);
+
+    // Replanning with permission applies it.
+    const applied = await planner.plan({ projectId: 'p', profile: profile(), segments: withInstruction }, { now, previous: again.plan, allowReplan: ['a2'] });
+    expect(applied.planned).toEqual(['a2']);
+    expect(seg(applied.plan, 'a2').stale).toBeUndefined();
+    expect(effectiveSegment(seg(applied.plan, 'a2')).conceptId).toBe('bar-comparison');
+
+    // Or the editor explicitly keeps the approved graphic; history says the instruction wasn't applied.
+    const kept = applyEditorAction(seg(again.plan, 'a2'), { type: 'acknowledge-change' }, at);
+    expect(kept).toMatchObject({ status: 'approved', stale: undefined, suggestion: approved.suggestion });
+    expect(kept.history.at(-1)?.reason).toMatch(/instruction was not applied/);
+  });
+
+  it('clears the flag when the editor undoes the change', async () => {
+    const p = act(await base(), 'a2', { type: 'approve' });
+    const edited = transcript('video-a').map((s) => (s.id === 'a2' ? { ...s, instruction: 'make it a list' } : s));
+    const flagged = (await planner.plan({ projectId: 'p', profile: profile(), segments: edited }, { now, previous: p })).plan;
+    expect(seg(flagged, 'a2').stale?.instructionFrom).toBe('');
+    const undone = await planner.plan({ projectId: 'p', profile: profile(), segments: transcript('video-a') }, { now, previous: flagged });
+    expect(seg(undone.plan, 'a2')).toMatchObject({ status: 'approved', stale: undefined });
+    expect(undone.flagged).toEqual([]);
+  });
+
   it('replans an approved segment only with explicit editor permission', async () => {
     const p = act(await base(), 'a2', { type: 'approve' });
     const segments = transcript('video-a').map((s) => (s.id === 'a2' ? { ...s, text: 'We now have 40% more customers.' } : s));

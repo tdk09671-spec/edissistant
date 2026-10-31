@@ -187,6 +187,10 @@ describe('editor preferences and instructions', () => {
     expect(parseLocalEdit('make it much slower and bigger')).toMatchObject({ handled: true, overrides: { params: { pace: 0.6, scale: 1.25 } } });
     expect(parseLocalEdit('stay on the speaker')).toMatchObject({ handled: true, overrides: { visualMode: 'speaker', conceptId: 'speaker-only' } });
     expect(parseLocalEdit('use #FF8800 and a wipe')).toMatchObject({ handled: true, overrides: { params: { accent: '#ff8800', transition: 'wipe' } } });
+    // "Show it as …" is how editors phrase a concept change (Windows round 2 used "Show it as bars.").
+    expect(parseLocalEdit('Show it as bars.')).toMatchObject({ handled: true, overrides: { conceptId: 'bar-comparison' }, remainder: '' });
+    expect(parseLocalEdit('turn this into a timeline')).toMatchObject({ handled: true, overrides: { conceptId: 'timeline-track' } });
+    expect(parseLocalEdit('show it in red')).toMatchObject({ handled: false, remainder: expect.stringMatching(/red/) });
     const partial = parseLocalEdit('faster, and make it feel like a 90s infomercial');
     expect(partial.handled).toBe(false);
     expect(partial.remainder).toMatch(/feel like a 90s infomercial/);

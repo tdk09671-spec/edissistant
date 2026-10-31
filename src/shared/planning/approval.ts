@@ -74,6 +74,13 @@ export function alignConceptAndMode(plan: SegmentPlan, overrides: EditorOverride
 
 /** Applies an editor action. Throws INVALID_ACTION for transitions the workflow doesn't allow. */
 export function applyEditorAction(plan: SegmentPlan, action: EditorAction, at: string): SegmentPlan {
+  if (action.type === 'approve' && plan.stale?.instructionFrom !== undefined) {
+    // Approving would keep the old graphic and quietly drop the editor's new instruction.
+    throw new PlanningError(
+      'INVALID_ACTION',
+      'The instruction changed after this segment was approved. Replan the segment to apply it, or acknowledge the change to keep the approved graphic.'
+    );
+  }
   if (!canApply(plan, action.type)) {
     throw new PlanningError('INVALID_ACTION', `Can't ${action.type.replace('-', ' ')} a segment that is ${plan.status}.`);
   }
@@ -105,7 +112,9 @@ export function applyEditorAction(plan: SegmentPlan, action: EditorAction, at: s
     case 'acknowledge-change':
       next.inputHash = plan.stale?.inputHash ?? plan.inputHash;
       next.stale = undefined;
-      next.history.push(change(plan.status, to, 'editor', 'Reviewed the changed transcript; kept the approval', at));
+      next.history.push(
+        change(plan.status, to, 'editor', plan.stale?.instructionFrom !== undefined ? 'Kept the approved graphic; the new instruction was not applied' : 'Reviewed the changed transcript; kept the approval', at)
+      );
       break;
   }
   return next;

@@ -178,7 +178,10 @@ export class CreativePlanner {
       const editorOwned = prior.status === 'approved' || prior.status === 'edited';
       if (editorOwned && !permitted) {
         if (changed && prior.status === 'approved') {
-          // Keep the approval; tell the editor the transcript moved under it.
+          // Keep the approval; tell the editor what changed under it. `instruction` follows the row,
+          // so the instruction the graphic was planned with is kept in the flag until it's resolved.
+          const plannedInstruction = prior.stale ? (prior.stale.instructionFrom ?? prior.instruction) : prior.instruction;
+          const instructionChanged = (input.instruction ?? '').trim() !== (plannedInstruction ?? '').trim();
           results.set(input.id, {
             ...prior,
             start: input.start,
@@ -186,7 +189,14 @@ export class CreativePlanner {
             text: input.text,
             speaker: input.speaker,
             instruction: input.instruction,
-            stale: { reason: 'The transcript or timing changed after approval.', since: prior.stale?.since ?? at, inputHash: hash },
+            stale: {
+              reason: instructionChanged
+                ? 'The editor instruction changed after approval. Apply it to replan this segment, or keep the approved graphic.'
+                : 'The transcript or timing changed after approval.',
+              since: prior.stale?.since ?? at,
+              inputHash: hash,
+              ...(instructionChanged ? { instructionFrom: plannedInstruction ?? '' } : {}),
+            },
           });
           flagged.push(input.id);
         } else if (changed) {
@@ -203,6 +213,10 @@ export class CreativePlanner {
             history: [...prior.history, changeRecord(prior.status, 'needs-regeneration', 'Transcript changed after your edits; edits kept.', at)],
           });
           flagged.push(input.id);
+        } else if (prior.stale) {
+          // The row is back to what was approved (e.g. the editor undid the change): the flag goes.
+          results.set(input.id, { ...prior, start: input.start, end: input.end, text: input.text, speaker: input.speaker, instruction: input.instruction, stale: undefined });
+          kept.push(input.id);
         } else {
           results.set(input.id, prior);
           kept.push(input.id);
