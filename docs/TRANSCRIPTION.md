@@ -155,6 +155,18 @@ default model, and plain-language `problems`) without running anything.
 
 `parseTranscript()` validates a file and rejects other schemas or versions.
 
+### Sentence start timing
+
+- **The problem.** Without DTW, whisper.cpp pins the first token of each segment to the segment's start timestamp. Whisper usually puts that where the previous segment ended, before the pause, so a sentence could start most of a second before its first word. On Windows that put graphics up to ~0.9 s ahead of the speech.
+- **Which starts are affected.** The parser marks those starts (`anchoredStarts`): the first word of a segment whose time equals the segment start, or every segment's first word when there is no token timing. DTW times are measured onsets and are never marked.
+- **The fix.** The service moves each marked start to the speech onset it measures in the 16 kHz WAV that whisper read. It uses 10 ms RMS frames, with a threshold well above the noise floor.
+  - The new start stays inside that word, keeps at least 50 ms of it, and never goes before the previous word.
+  - A start already in speech is walked back to where that speech began, at most 0.5 s.
+  - No fixed offset is applied. Measured words and every word end are untouched.
+- **Starts that can't be checked.** A start with no clear onset is left as the engine gave it, and counted. The transcript then warns "N sentence start(s) couldn't be checked against the audio and may be early".
+- **What the transcript records.** `transcript.timing = { source: 'dtw' | 'tokens' | 'interpolated', refinedStarts, uncheckedStarts }` says how the times were produced.
+- **Best accuracy.** Use DTW (`dtwAlignment`). On whisper.cpp 1.8 or newer, the app adds `-nfa` so DTW isn't switched off.
+
 ### Editing sentences
 
 Pure, immutable helpers in `src/shared/transcription/sentences.ts`:
@@ -180,7 +192,9 @@ into following silence but never overlap the next cue. The output parses with th
 
 - Location: `%APPDATA%\edissistant\transcripts\<key>.json` (atomic writes; oldest pruned beyond 500 entries).
 - Key = media fingerprint + whisper-cli binary (name, size, mtime) + model file (name, size, mtime) + language +
-  audio track + DTW flag + schema version. Grouping options are not in the key: cached words are re-grouped on load.
+  audio track + DTW flag + schema version + timing version. Grouping options are not in the key: cached words are re-grouped on load.
+  The timing version (`TIMING_VERSION`, now 2) was bumped when anchored sentence starts started being refined from the audio,
+  so transcripts cached before that are made again.
 - Media fingerprint = size + mtime + SHA-256 of 1 MiB samples at 0 %, 25 %, 50 %, 75 % and the end, so multi-GB camera
   files are fingerprinted almost instantly. Renaming or moving a file keeps its cache entry; re-exporting it (new
   mtime) or replacing the model or engine invalidates it.

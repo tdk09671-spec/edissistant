@@ -19,6 +19,7 @@ import {
   type TranscriptionStatus,
 } from '../../shared/transcription';
 import { cacheKey, fingerprintFile, TranscriptCache } from './cache';
+import { energyEnvelope, readWav16, refineAnchoredStarts } from './onsets';
 import { extractAudio, ffmpegVersion } from './ffmpeg';
 import { findFfmpeg, findWhisper, listModels, resolveModel, type ToolLocations } from './tools';
 import { WhisperCppEngine, type TranscriptionEngine } from './whisperCpp';
@@ -48,6 +49,9 @@ export interface JobResult {
   transcript: Transcript;
   fromCache: boolean;
 }
+
+/** Version of the timing pipeline; part of the cache key. */
+export const TIMING_VERSION = 2;
 
 // Share of overall progress per stage.
 const EXTRACT_SPAN: [number, number] = [0.02, 0.15];
@@ -230,6 +234,9 @@ export class TranscriptionService {
       language,
       audioTrack,
       dtwAlignment,
+      // Bumped when word/sentence timing changes, so older cached transcripts are made again
+      // (2: sentence starts pinned to segment boundaries are refined from the audio).
+      timing: TIMING_VERSION,
     });
     return {
       key,
@@ -308,8 +315,21 @@ export class TranscriptionService {
 
       report('grouping', 0.98, 'Building sentences');
       const mediaDuration = duration || output.end;
-      const words = normalizeWords(output.words, mediaDuration);
       const warnings = [...output.warnings];
+      const anchored = output.anchoredStarts ?? [];
+      let onsets = { words: output.words, refined: 0, unchecked: anchored.length };
+      if (anchored.length) {
+        try {
+          const { samples, rate } = readWav16(audioPath);
+          onsets = refineAnchoredStarts(output.words, anchored, energyEnvelope(samples, rate));
+        } catch {
+          // Unreadable audio: keep the engine's times and say so below.
+        }
+      }
+      if (onsets.unchecked > 0) {
+        warnings.push(`${onsets.unchecked} sentence start(s) couldn't be checked against the audio and may be early.`);
+      }
+      const words = normalizeWords(onsets.words, mediaDuration);
       if (words.length === 0) warnings.push('No speech was detected.');
       if (output.wordTiming === 'interpolated') warnings.push('The engine gave no word timing; word times are estimated.');
 
@@ -337,6 +357,7 @@ export class TranscriptionService {
           threads: job.threads,
         },
         wordTiming: output.wordTiming,
+        timing: { source: output.timingSource ?? (output.wordTiming === 'word' ? 'tokens' : 'interpolated'), refinedStarts: onsets.refined, uncheckedStarts: onsets.unchecked },
         // The cache keeps default grouping; callers' grouping is applied on top.
         sentences: groupWordsIntoSentences(words),
         createdAt: new Date().toISOString(),

@@ -31,6 +31,10 @@ export interface EngineOutput {
   language: string;
   words: TranscriptWord[];
   wordTiming: WordTiming;
+  /** Where word times came from (see ParsedWhisperOutput). */
+  timingSource?: 'dtw' | 'tokens' | 'interpolated';
+  /** Indices of words whose start is a segment boundary, not a measured onset. */
+  anchoredStarts?: number[];
   end: number;
   device: TranscriptionDevice;
   gpuBackend?: string;
