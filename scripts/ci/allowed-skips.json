@@ -58,7 +58,12 @@
         "test": "an export made anyway is recorded and shown as outdated",
         "reason": "Writes an export, so it needs FFmpeg (not installed on the Windows runner); the pre-export warning test runs. Covered by the Linux job."
       },
-      { "file": "tests/e2e/dtw-setting.spec.ts", "reason": "Needs FFmpeg and a POSIX shell for the stand-in whisper-cli; covered by the Linux job." }
+      { "file": "tests/e2e/dtw-setting.spec.ts", "reason": "Needs FFmpeg and a POSIX shell for the stand-in whisper-cli; covered by the Linux job." },
+      {
+        "file": "tests/e2e/claude.spec.ts",
+        "test": "a preview and an export of a Claude plan use the saved plan: no new request",
+        "reason": "Renders and exports, so it needs FFmpeg (not installed on the Windows runner); the other Claude tests in the file run (against a local mock, no network). Covered by the Linux job."
+      }
     ]
   }
 }

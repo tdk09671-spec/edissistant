@@ -53,7 +53,8 @@ and the engine docs. CI runs the existing suites; it doesn't change them.
 - **No secrets, no paid calls.** The token is read-only (`contents: read`), checkout doesn't keep
   credentials, and no secret is referenced. Claude planning reads its API key only from the app's
   settings, which every test isolates in an empty folder, so it fails with `NO_API_KEY` before any
-  request. Transcription uses a stand-in for whisper.cpp, so no model is downloaded and no GPU is needed.
+  request. The Claude E2E tests (`claude.spec`, once merged) use a fake key against a mock Anthropic
+  server on `127.0.0.1`, which the app accepts only in test mode. Transcription uses a stand-in for whisper.cpp, so no model is downloaded and no GPU is needed.
 - **Sandbox stays on.** The Linux job runs as the runner's normal user and checks it isn't root.
   Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's sandbox prefers, so the job makes
   Electron's bundled `chrome-sandbox` helper setuid root (Chromium's documented fallback). It never
@@ -66,7 +67,7 @@ and the engine docs. CI runs the existing suites; it doesn't change them.
 | Linux, unit | `referenceAnalysis` › on `PLANNING_REFERENCE_VIDEO` | Opt-in, needs the editor's own reference video |
 | Linux, unit | `whisperCpp` › Unicode model paths on Windows | Windows only; runs in the Windows job (and must not skip there) |
 | Windows, unit | Any test in: `planning/referenceAnalysis`, `pipeline/flow`, `pipeline/media`, `render/compose`, `render/encoder`, `render/service`, `transcription/ffmpeg`, `transcription/onsets`, `transcription/service`, `transcription/coverage`, `transcription/onsetScenes`, `transcription/boundaries` | Need FFmpeg, some with libflite or a POSIX shell. All run on Linux |
-| Windows, E2E | `pipeline.spec`, `transcription.spec`, `rendering.spec`, `dtw-setting.spec`, and the tests that render or export in `review-instruction.spec`, `graphic-timing.spec` and `export-warning.spec` | Need FFmpeg (and a POSIX shell for the stand-in engines); all run on Linux |
+| Windows, E2E | `pipeline.spec`, `transcription.spec`, `rendering.spec`, `dtw-setting.spec`, and the tests that render or export in `review-instruction.spec`, `graphic-timing.spec`, `export-warning.spec` and `claude.spec` | Need FFmpeg (and a POSIX shell for the stand-in engines); all run on Linux |
 | Linux, E2E | None | |
 
 To allow a new skip, add an entry with a reason. To allow one test, give `"test"` as its full name
