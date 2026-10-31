@@ -15,7 +15,8 @@ npm run test:e2e  # builds, then drives the real Electron app with Playwright
 - **Fixtures** (`tests/fixtures`) are synthetic: a 3-second FFmpeg test pattern (`sample.mp4`) and a two-cue `sample.srt`. `tests/fixtures/transcription/` adds 1–2 s FFmpeg tones (`tone.wav`, `tone.mp3`, `clip.mov` with two audio tracks, `no-audio.mp4`), synthetic whisper.cpp JSON output, and `fake-whisper-cli.cjs`, a stand-in for whisper.cpp so tests need no model download. Never add client media.
 - **Transcription tests** (`tests/unit/transcription`) use the real FFmpeg on `PATH` when present; FFmpeg-dependent tests are skipped otherwise.
 - On failure, Playwright keeps a trace and a screenshot in `test-results/` (`npx playwright show-trace <trace.zip>`). An HTML report goes to `playwright-report/`.
-- The E2E tests need a desktop session. Cloud or headless Linux sessions can run `npm run test:unit`, `npm run typecheck` and `npm run build`. Running E2E there would need `xvfb-run` and is untested.
+- The E2E tests need a display. On headless Linux, run them with `xvfb-run -a npx playwright test`, as a normal user, not root. Electron refuses to run as root with its sandbox on.
+- GitHub Actions runs all of this on Linux and Windows for every non-draft pull request. See [docs/CI.md](docs/CI.md) for what runs where, which skips are allowed, and how to read a failure.
 
 ## Test log v4: end-to-end integration (Linux, 2026-10-31)
 

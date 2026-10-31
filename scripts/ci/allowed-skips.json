@@ -1,0 +1,69 @@
+{
+  "$comment": [
+    "Tests that may be skipped in CI, per runner OS. verify-skips.mjs fails the job when any other test",
+    "is skipped, so a missing tool or a broken skip condition can't quietly turn a check green.",
+    "An entry with \"test\" allows that one test (its full name: describe titles + test title, separated by spaces).",
+    "An entry without \"test\" allows any test in that file to skip; use it only for tests that depend on a",
+    "tool the runner doesn't have. Every entry needs a reason. Allowed is not required: a test that runs is fine."
+  ],
+  "vitest": {
+    "linux": [
+      {
+        "file": "tests/unit/planning/referenceAnalysis.test.ts",
+        "test": "analyzeReference on PLANNING_REFERENCE_VIDEO analyses the editor's own file and builds a profile from it",
+        "reason": "Opt-in: runs only when PLANNING_REFERENCE_VIDEO points at a real reference video on the developer's machine. CI has synthetic media only."
+      },
+      {
+        "file": "tests/unit/transcription/whisperCpp.test.ts",
+        "test": "Unicode model paths on Windows transcribes end to end with the model and work folder under a Unicode user folder",
+        "reason": "Windows only (8.3 short paths and hard links for non-ASCII model paths). Runs in the Windows job."
+      }
+    ],
+    "windows": [
+      {
+        "file": "tests/unit/planning/referenceAnalysis.test.ts",
+        "reason": "Needs FFmpeg/FFprobe (not installed on the Windows runner); covered by the Linux job. The opt-in reference-video test also skips."
+      },
+      { "file": "tests/unit/pipeline/flow.test.ts", "reason": "Needs FFmpeg and a POSIX shell for the stand-in whisper-cli; covered by the Linux job." },
+      { "file": "tests/unit/pipeline/media.test.ts", "reason": "Needs FFmpeg/FFprobe (not installed on the Windows runner); covered by the Linux job." },
+      { "file": "tests/unit/render/compose.test.ts", "reason": "Needs FFmpeg/FFprobe (not installed on the Windows runner); covered by the Linux job." },
+      { "file": "tests/unit/render/encoder.test.ts", "reason": "Needs FFmpeg/FFprobe (not installed on the Windows runner); covered by the Linux job." },
+      { "file": "tests/unit/render/service.test.ts", "reason": "Needs FFmpeg/FFprobe (not installed on the Windows runner); covered by the Linux job." },
+      { "file": "tests/unit/transcription/ffmpeg.test.ts", "reason": "Needs FFmpeg (not installed on the Windows runner); covered by the Linux job." },
+      { "file": "tests/unit/transcription/onsets.test.ts", "reason": "End-to-end onset test needs FFmpeg and a POSIX shell; covered by the Linux job." },
+      { "file": "tests/unit/transcription/service.test.ts", "reason": "Needs FFmpeg (not installed on the Windows runner); covered by the Linux job." },
+      { "file": "tests/unit/transcription/coverage.test.ts", "reason": "The service-level dropped-speech tests need FFmpeg (not installed on the Windows runner); the pure detection tests still run. Covered by the Linux job." },
+      { "file": "tests/unit/transcription/onsetScenes.test.ts", "reason": "The real-TTS onset tests need FFmpeg with libflite (not on the Windows runner); the synthetic-scene tests still run. Covered by the Linux job." },
+      { "file": "tests/unit/transcription/boundaries.test.ts", "reason": "The real-TTS boundary tests need FFmpeg with libflite (not on the Windows runner); the synthetic-scene tests still run. Covered by the Linux job." }
+    ]
+  },
+  "playwright": {
+    "linux": [],
+    "windows": [
+      { "file": "tests/e2e/pipeline.spec.ts", "reason": "Needs FFmpeg with flite and a POSIX shell for the stand-in whisper-cli; covered by the Linux job." },
+      { "file": "tests/e2e/transcription.spec.ts", "reason": "Needs FFmpeg and a POSIX shell for the stand-in engine; covered by the Linux job." },
+      { "file": "tests/e2e/rendering.spec.ts", "reason": "Needs FFmpeg/FFprobe (not installed on the Windows runner); covered by the Linux job." },
+      {
+        "file": "tests/e2e/review-instruction.spec.ts",
+        "test": "an instruction edited in Review on an approved segment is applied and re-rendered, never silently ignored",
+        "reason": "Renders a preview, so it needs FFmpeg (not installed on the Windows runner); the other tests in the file run. Covered by the Linux job."
+      },
+      {
+        "file": "tests/e2e/graphic-timing.spec.ts",
+        "test": "the editor sets a graphic’s in/out on exact 29.97 frames; only it re-renders; it persists and resets to the speech timing",
+        "reason": "Renders previews, so it needs FFmpeg (not installed on the Windows runner). Covered by the Linux job."
+      },
+      {
+        "file": "tests/e2e/export-warning.spec.ts",
+        "test": "an export made anyway is recorded and shown as outdated",
+        "reason": "Writes an export, so it needs FFmpeg (not installed on the Windows runner); the pre-export warning test runs. Covered by the Linux job."
+      },
+      { "file": "tests/e2e/dtw-setting.spec.ts", "reason": "Needs FFmpeg and a POSIX shell for the stand-in whisper-cli; covered by the Linux job." },
+      {
+        "file": "tests/e2e/claude.spec.ts",
+        "test": "a preview and an export of a Claude plan use the saved plan: no new request",
+        "reason": "Renders and exports, so it needs FFmpeg (not installed on the Windows runner); the other Claude tests in the file run (against a local mock, no network). Covered by the Linux job."
+      }
+    ]
+  }
+}
