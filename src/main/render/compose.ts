@@ -1,5 +1,5 @@
 import { cancelled, RenderError } from '../../shared/animation/errors';
-import { fpsString, frameToSeconds, secondsToFrames } from '../../shared/animation/timeline';
+import { fpsRational, fpsString, frameToSeconds, secondsToFrames } from '../../shared/animation/timeline';
 import { runTool } from './process';
 
 export interface CompositionClip {
@@ -50,11 +50,21 @@ export function compositionArgs(req: CompositionRequest): string[] {
 
   const pad = req.baseVideo ? 'tpad=stop=-1:stop_mode=add:color=black,' : '';
   const filters: string[] = [`[0:v]${pad}fps=${rate},scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuva444p[base0]`];
+  // Clip frames are placed by frame number, not by time: each clip is put on the sequence's exact
+  // frame time base (e.g. 1001/30000) and its k-th frame gets timestamp first + k. Times at NTSC
+  // rates have no exact decimal form (frame 26 at 24000/1001 is 1.0844166…s), so any boundary or
+  // offset written in seconds can round onto the wrong frame (a graphic one frame late, or missing
+  // its last frame). The on-screen window keeps half a frame of margin on both sides for the same
+  // reason; it opens on the clip's first frame and closes after its last.
+  const { num, den } = fpsRational(req.fps);
+  const half = (0.5 * den) / num;
   req.clips.forEach((clip, i) => {
-    const start = clipStartSeconds(clip.start, req.fps).toFixed(6);
-    const end = (clipStartSeconds(clip.start, req.fps) + clip.duration).toFixed(6);
-    filters.push(`[${i + 1}:v]scale=${w}:${h},format=yuva444p,setpts=PTS-STARTPTS+${start}/TB[clip${i}]`);
-    filters.push(`[base${i}][clip${i}]overlay=eof_action=pass:enable='gte(t,${start})*lt(t,${end})'[base${i + 1}]`);
+    const firstFrame = secondsToFrames(clip.start, req.fps);
+    const frames = Math.max(1, secondsToFrames(clip.duration, req.fps));
+    const from = (frameToSeconds(firstFrame, req.fps) - half).toFixed(6);
+    const to = (frameToSeconds(firstFrame + frames, req.fps) - half).toFixed(6);
+    filters.push(`[${i + 1}:v]scale=${w}:${h},format=yuva444p,settb=${den}/${num},setpts=N+${firstFrame}[clip${i}]`);
+    filters.push(`[base${i}][clip${i}]overlay=eof_action=pass:enable='gte(t,${from})*lt(t,${to})'[base${i + 1}]`);
   });
   filters.push(`[base${req.clips.length}]format=yuv420p,setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709[out]`);
 

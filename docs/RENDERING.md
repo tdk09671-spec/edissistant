@@ -383,6 +383,14 @@ over IPC, `getImageData`, and ProRes encoding (single FFmpeg process). Next step
 `MessagePort`/shared-memory transfer, rendering in an `OffscreenCanvas` worker, rendering segments in parallel
 sandboxes, and keeping one warm sandbox between renders (each render opens a new one: ~0.3–0.5 s).
 
+**Fixed after the Windows run: preview placement at NTSC rates.** The preview composer wrote each segment's start
+and end as seconds with 6 decimals. Where that rounded up past the frame's exact time (e.g. 1.064 s at
+24000/1001 snaps to frame 26 = 1.0844166…s), the segment appeared one frame late and lost its last frame. Start
+times whose 6-decimal form rounds down were unaffected, which is why the Windows check above passed. Clips are
+now stamped by frame number in the sequence's exact frame time base (`settb=1001/30000,setpts=N+first`).
+`tests/unit/render/compose.test.ts` checks every frame with real FFmpeg at 24000/1001 and 30000/1001. Segment
+renders, alpha and audio are unchanged.
+
 ## Known limitations
 
 - **Preview composition memory grows with the number of segments**: about 165 MB per 1080p segment
