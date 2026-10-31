@@ -217,9 +217,17 @@ describe.skipIf(!ffmpegPath || process.platform === 'win32')('end to end: real F
     // Ends and measured words are as the engine gave them.
     expect(transcript.sentences.map((s) => s.end)).toEqual([2.1, 3.3, 6]);
     expect(transcript.sentences[0].words[1]).toMatchObject({ text: 'works.', start: 1.5, end: 2.1 });
-    expect(transcript.timing).toEqual({ source: 'tokens', refinedStarts: 3, uncheckedStarts: 0, confirmedStarts: 0, uncertainStarts: 0 });
+    // The boundary pass finds every start already right and every end on the speech: nothing to move or flag.
+    expect(transcript.timing).toEqual({
+      source: 'tokens',
+      refinedStarts: 3,
+      uncheckedStarts: 0,
+      confirmedStarts: 0,
+      uncertainStarts: 0,
+      boundaries: { startsMoved: 0, endsTrimmed: 0, startsUncertain: 0, endsUncertain: 0 },
+    });
     expect(transcript.coverage).toEqual({ complete: true, gaps: [], recovered: [] });
     expect(transcript.sentences.every((s) => !s.words[0].startUncertain)).toBe(true);
-    expect(TIMING_VERSION).toBe(3);
+    expect(TIMING_VERSION).toBe(4);
   });
 });

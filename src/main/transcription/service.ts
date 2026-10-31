@@ -19,7 +19,7 @@ import {
   type TranscriptionStatus,
 } from '../../shared/transcription';
 import { cacheKey, fingerprintFile, TranscriptCache } from './cache';
-import { analyzeSpeech, readWav16, refineAnchoredStarts, untranscribedSpeech, wavBytes, type OnsetResult, type SpeechAnalysis } from './onsets';
+import { analyzeSpeech, readWav16, refineAnchoredStarts, refineSentenceBoundaries, untranscribedSpeech, wavBytes, type OnsetResult, type SpeechAnalysis } from './onsets';
 import { extractAudio, ffmpegVersion } from './ffmpeg';
 import { findFfmpeg, findWhisper, listModels, resolveModel, type ToolLocations } from './tools';
 import { WhisperCppEngine, type EngineInput, type EngineOutput, type TranscriptionEngine } from './whisperCpp';
@@ -51,7 +51,7 @@ export interface JobResult {
 }
 
 /** Version of the timing pipeline; part of the cache key. */
-export const TIMING_VERSION = 3;
+export const TIMING_VERSION = 4;
 
 // Share of overall progress per stage.
 const EXTRACT_SPAN: [number, number] = [0.02, 0.15];
@@ -237,7 +237,8 @@ export class TranscriptionService {
       dtwAlignment,
       // Bumped when word/sentence timing changes, so older cached transcripts are made again
       // (2: sentence starts pinned to segment boundaries are refined from the audio; 3: speech-band
-      // onsets with uncertainty flags, and dropped speech detected and transcribed again).
+      // onsets with uncertainty flags, and dropped speech detected and transcribed again; 4: every
+      // sentence start and end checked against the pauses in the audio).
       timing: TIMING_VERSION,
     });
     return {
@@ -280,7 +281,7 @@ export class TranscriptionService {
     workDir: string,
     signal: AbortSignal,
     report: (stage: TranscriptionStage, progress: number, message: string) => void
-  ): Promise<{ output: EngineOutput; onsets: OnsetResult; warnings: string[]; coverage?: Transcript['coverage']; dtwFallback?: { reason: 'truncated'; dtwEnd: number } }> {
+  ): Promise<{ output: EngineOutput; onsets: OnsetResult; warnings: string[]; analysis: SpeechAnalysis | null; coverage?: Transcript['coverage']; dtwFallback?: { reason: 'truncated'; dtwEnd: number } }> {
     let audio: { samples: Int16Array; rate: number } | null = null;
     let analysis: SpeechAnalysis | null = null;
     try {
@@ -309,7 +310,7 @@ export class TranscriptionService {
     let onsets = refine(first, analysis);
     if (!analysis || !audio) {
       warnings.push('The audio couldn’t be read back, so sentence starts and missing speech weren’t checked.');
-      return { output, onsets, warnings };
+      return { output, onsets, warnings, analysis: null };
     }
     let gaps = untranscribedSpeech(analysis, onsets.words);
     let dtwFallback: { reason: 'truncated'; dtwEnd: number } | undefined;
@@ -379,14 +380,7 @@ export class TranscriptionService {
       if (gaps.length) warnings.push(`Speech at ${spans(gaps)} has no text in the transcript: the engine returned nothing there, even on a second pass. Check it, or try another model.`);
     }
 
-    const doubtful = onsets.unchecked + onsets.uncertain;
-    if (doubtful > 0) {
-      warnings.push(
-        `${doubtful} sentence start(s) couldn’t be verified against the audio (music or noise under the speech, overlapping voices, or no clear pause). ` +
-          'Graphics there may start early or late; those sentences are marked in the transcript.'
-      );
-    }
-    return { output, onsets, warnings, coverage: { complete: gaps.length === 0, gaps, recovered }, ...(dtwFallback ? { dtwFallback } : {}) };
+    return { output, onsets, warnings, analysis, coverage: { complete: gaps.length === 0, gaps, recovered }, ...(dtwFallback ? { dtwFallback } : {}) };
   }
 
   private async runJob(
@@ -450,6 +444,18 @@ export class TranscriptionService {
       const words = normalizeWords(onsets.words, mediaDuration);
       if (words.length === 0) warnings.push('No speech was detected.');
       if (output.wordTiming === 'interpolated') warnings.push('The engine gave no word timing; word times are estimated.');
+      // Every sentence's start and end against the pauses in the audio (Windows round 3).
+      const grouped0 = groupWordsIntoSentences(words);
+      const bounds = checked.analysis ? refineSentenceBoundaries(grouped0, checked.analysis, mediaDuration) : null;
+      const sentences = bounds?.sentences ?? grouped0.map((s) => ({ ...s, words: s.words.map((w, i) => (i === 0 ? { ...w, startUncertain: true } : w)) }));
+      const flaggedStarts = sentences.filter((s) => s.words[0]?.startUncertain).length;
+      const flaggedEnds = sentences.filter((s) => s.words[s.words.length - 1]?.endUncertain).length;
+      if (flaggedStarts || flaggedEnds) {
+        warnings.push(
+          `${flaggedStarts} sentence start(s) and ${flaggedEnds} end(s) couldn’t be verified against the audio (music or noise under the speech, overlapping voices, or no clear pause). ` +
+            'Graphics there may start or end early or late; those sentences are marked in the transcript.'
+        );
+      }
 
       const stat = fs.statSync(mediaPath);
       const transcript: Transcript = {
@@ -482,10 +488,11 @@ export class TranscriptionService {
           confirmedStarts: onsets.confirmed,
           uncertainStarts: onsets.uncertain,
           ...(checked.dtwFallback ? { dtwFallback: checked.dtwFallback } : {}),
+          boundaries: { startsMoved: bounds?.startsMoved ?? 0, endsTrimmed: bounds?.endsTrimmed ?? 0, startsUncertain: flaggedStarts, endsUncertain: flaggedEnds },
         },
         ...(checked.coverage ? { coverage: checked.coverage } : {}),
         // The cache keeps default grouping; callers' grouping is applied on top.
-        sentences: groupWordsIntoSentences(words),
+        sentences,
         createdAt: new Date().toISOString(),
         warnings,
       };
@@ -495,7 +502,7 @@ export class TranscriptionService {
         transcript.warnings.push('The transcript could not be cached.');
       }
       report('done', 1, 'Transcript ready');
-      const grouped = request.options?.grouping ? groupWordsIntoSentences(words, request.options.grouping) : transcript.sentences;
+      const grouped = request.options?.grouping ? groupWordsIntoSentences(flattenWords(sentences), request.options.grouping) : transcript.sentences;
       return { transcript: { ...transcript, sentences: grouped }, fromCache: false };
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });

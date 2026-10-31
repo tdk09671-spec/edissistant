@@ -175,11 +175,17 @@ default model, and plain-language `problems`) without running anything.
   - Clean speech, with pauses up to 2.5 s and lead-ins down to −30 dB: within 10 ms (synthetic) and 26 ms (TTS).
   - With a music bed at −12 or −6 dB, every start is within 50 ms or flagged.
   - An overlapping voice is always flagged.
+- **Sentence starts and ends against the pauses** (timing version 4, after Windows validation round 3). Round 3 measured whisper's sentence ends late in the following pause (median +1.1 s, up to +2.6 s, sometimes past the next onset). Sentences that start mid-segment were never checked (+365 to +772 ms late, unflagged). After grouping, a second pass checks **every** sentence boundary against pauses in the audio. A pause is a run of at least 150 ms where neither the speech band nor the 2.5–7 kHz band rises over the local background. That background is the quietest 100 ms within ±1.5 s, kept at least half the quietest 600 ms so a music bed stays steady across its beats. Blips up to 60 ms (clicks, hi-hats, drum hits) don't break a pause.
+  - **Ends:** a sentence ends where the latest pause covering whisper's end begins, after any final plosive release (t, k, p) in the pause's first 250 ms. Ends are trimmed, never pushed more than 0.15 s past whisper's end, so a graphic never grows through a pause.
+  - **Starts:** every sentence, anchored or not, starts where the pause around or just before its start ends, never before the previous sentence's refined end.
+  - **Evidence:** clear evidence moves the boundary. Over music or noise it is moved but flagged "accurate to about ±0.1 s". With no pause (adjacent speech, overlapping voices) it is left and flagged. Flags are `startUncertain` on the first word and `endUncertain` on the last; counts are in `timing.boundaries`.
+  - **Unchanged:** the sentences, their text and word order. Only the boundary words' times change (and the spread of the words a boundary passes).
+  - **Measured** (`tests/unit/transcription/boundaries.test.ts`, truth from dry stems): on clean synthetic speech, starts within 10 ms and ends within 40 ms, including the 365 and 400 ms late mid-segment starts and 1.1–1.5 s late ends. With music at −12 or −6 dB, and on real flite TTS, every boundary is within 60 ms or flagged. Adjacent and overlapping speech is flagged.
 - **Missing speech** (Windows validation round 2: whisper.cpp 1.9.5, small.en with `-nfa`, dropped the last 8 s of a 40 s clip with no warning; base.en was fine). After every run the service looks for speech in the audio that no word covers: the speech band at least +8 dB over the file's floor, at least 1 s of it.
   - A **DTW run** that left speech without text is redone without DTW. If that covers more, it is used, with a warning naming the model and the spans, and `timing.dtwFallback = { reason: 'truncated', dtwEnd }`.
   - Speech that still has no text is **transcribed again** from a clip of just that audio, up to 5 spans and without DTW, and the words are added (`coverage.recovered`, with a warning).
   - Anything still missing is listed in `coverage.gaps`, with `coverage.complete = false` and a warning. A transcript is never accepted silently with dialogue missing.
-  - DTW stays opt-in: it is used only when a request asks for it.
+  - DTW stays opt-in: it is used only when a request asks for it, or when the `dtwAlignment` setting (the app's Settings → Transcription → Precise word timing) is on and the request doesn't say otherwise.
 - **Best accuracy.** Use DTW (`dtwAlignment`). On whisper.cpp 1.8 or newer, the app adds `-nfa` so DTW isn't switched off.
 
 ### Editing sentences
