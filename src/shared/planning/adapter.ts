@@ -5,7 +5,7 @@
 
 import { effectiveSegment } from './approval';
 import { comparisonSides } from './content';
-import { conceptById } from './concepts';
+import { conceptById, conceptModeIssue } from './concepts';
 import { ANIMATION_SPEC_VERSION_COMPAT, PR2_ID, type AnimationSpecCompat, type BackgroundCompat, type EasingCompat, type LayerCompat, type SequenceSpecCompat, type TransitionCompat, type TypographyCompat } from './compat';
 import { hash53 } from './hash';
 import { contrastRatio } from './styleProfile';
@@ -31,6 +31,8 @@ export type AdapterResult =
   | { status: 'unsupported'; segmentId: string; conceptId: string; reason: string }
   | { status: 'missing-data'; segmentId: string; conceptId: string; reason: string }
   | { status: 'missing-assets'; segmentId: string; conceptId: string; reason: string }
+  /** The concept can't be shown in the segment's visual mode (e.g. a motion graphic in Captions mode). */
+  | { status: 'incompatible'; segmentId: string; conceptId: string; reason: string }
   | { status: 'not-approved'; segmentId: string; conceptId: string; reason: string };
 
 interface Ctx {
@@ -441,6 +443,9 @@ export function adaptSegment(seg: EffectiveSegment, profile: StyleProfile, setti
   if (concept.components === null) return { ...base, status: 'unsupported', reason: concept.unsupportedReason ?? 'Not renderable.' };
   if (concept.components.length === 0 || seg.visualMode === 'speaker') return { ...base, status: 'no-graphic', reason: 'Stays on the speaker; nothing to render.' };
   if (seg.visualMode === 'b-roll') return { ...base, status: 'no-graphic', reason: 'B-roll is footage the editor places; nothing to render.' };
+  // Never build a spec PR #2 would reject (a whole sequence fails on one invalid segment).
+  const issue = conceptModeIssue(concept.id, seg.visualMode);
+  if (issue) return { ...base, status: 'incompatible', reason: issue };
   const build = BUILDERS[concept.id];
   if (!build) return { ...base, status: 'unsupported', reason: `No PR #2 mapping for ${concept.label} yet.` };
 

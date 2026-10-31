@@ -126,6 +126,7 @@ with who did it and when.
 
 **Edits:**
 - Edits are stored as `overrides` on top of the suggestion. The suggestion itself is never rewritten.
+- Concept and visual mode stay compatible: picking a concept brings its own mode, and picking a mode brings that mode's default concept. Both are recorded in history. Motion and background graphics are interchangeable. Asking for an impossible pair explicitly is refused with the reason.
 - `effectiveSegment` merges the two. Overrides accumulate.
 
 **Plain-language edits:**
@@ -164,6 +165,7 @@ PR #2 `AnimationSpec`s. `toSequenceSpec` collects them into a `SequenceSpec`.
 | `unsupported` | `b-roll-suggestion` needs footage. `map-route` has no PR #2 map component (it would need a map image asset or a new component). Unknown ids also land here. |
 | `missing-data` | The concept's data isn't in the transcript: no spoken number, fewer than two values or steps, or no speaker name for a lower third. |
 | `missing-assets` | `logo-sting` without a logo file in the preset. |
+| `incompatible` | The concept can't be shown in the segment's visual mode, e.g. a motion graphic in Captions mode. The reason names the fix. Only plans saved before edits kept concept and mode aligned can reach this. |
 | `not-approved` | The segment isn't approved, or it is approved but stale. It is only included with `includeUnapproved` for previews. |
 
 **Fonts are strict by default.** `allowFontFallback` defaults to false, so PR #2 fails with

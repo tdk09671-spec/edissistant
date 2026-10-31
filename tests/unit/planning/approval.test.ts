@@ -159,3 +159,57 @@ describe('replanning', () => {
     expect(p.segments.filter((s: SegmentPlan) => s.status === 'approved').map((s) => s.segmentId)).toEqual(['a1', 'a2', 'a3']);
   });
 });
+
+describe('concept and visual mode stay compatible (regression: Windows INVALID_SPEC)', () => {
+  // On Windows, picking "Kinetic headline" for a Captions segment produced a transparent-captions
+  // spec with no captions layer, and PR #2 rejected the whole preview.
+  const captionsSegment = async () => {
+    const s = seg(await base(), 'a2');
+    return applyEditorAction(s, { type: 'edit', overrides: { conceptId: 'caption-emphasis', visualMode: 'captions' } }, at);
+  };
+
+  it('picking a concept brings its own mode, and says so', async () => {
+    const e = applyEditorAction(await captionsSegment(), { type: 'edit', overrides: { conceptId: 'kinetic-headline' } }, at);
+    expect(effectiveSegment(e)).toMatchObject({ conceptId: 'kinetic-headline', visualMode: 'motion-graphics' });
+    expect(e.history.at(-1)?.reason).toBe('Concept set to Kinetic headline; visual mode changed to Motion graphics to match.');
+  });
+
+  it('picking a mode brings that mode’s default concept, and says so', async () => {
+    const s = seg(await base(), 'a2');
+    const e = applyEditorAction(applyEditorAction(s, { type: 'edit', overrides: { conceptId: 'counter-hero' } }, at), { type: 'edit', overrides: { visualMode: 'captions' } }, at);
+    expect(effectiveSegment(e)).toMatchObject({ conceptId: 'caption-emphasis', visualMode: 'captions' });
+    expect(e.history.at(-1)?.reason).toMatch(/Visual mode set to Captions; concept changed to/);
+    // Motion and background graphics are interchangeable: the concept is kept.
+    const bg = applyEditorAction(applyEditorAction(s, { type: 'edit', overrides: { conceptId: 'counter-hero' } }, at), { type: 'edit', overrides: { visualMode: 'background-graphics' } }, at);
+    expect(effectiveSegment(bg)).toMatchObject({ conceptId: 'counter-hero', visualMode: 'background-graphics' });
+  });
+
+  it('an impossible pair asked for explicitly is refused with the reason, nothing changes', async () => {
+    const s = await captionsSegment();
+    expect(() => applyEditorAction(s, { type: 'edit', overrides: { conceptId: 'kinetic-headline', visualMode: 'captions' } }, at)).toThrow(
+      /Kinetic headline can't be shown in Captions mode\. Switch the visual mode to Motion graphics, or pick/
+    );
+    expect(effectiveSegment(s)).toMatchObject({ conceptId: 'caption-emphasis', visualMode: 'captions' });
+  });
+
+  it('params-only edits keep the concept and mode; rejected concepts stay recorded', async () => {
+    const s = await captionsSegment();
+    const paced = applyEditorAction(s, { type: 'edit', overrides: { params: { pace: 1.2 } } }, at);
+    expect(effectiveSegment(paced)).toMatchObject({ conceptId: 'caption-emphasis', visualMode: 'captions' });
+    const rejected = applyEditorAction(s, { type: 'reject' }, at);
+    const picked = applyEditorAction(rejected, { type: 'edit', overrides: { conceptId: 'list-stack' } }, at);
+    expect(picked.rejectedConcepts).toEqual(['caption-emphasis']);
+    expect(effectiveSegment(picked)).toMatchObject({ conceptId: 'list-stack', visualMode: 'motion-graphics' });
+    expect(applyEditorAction(picked, { type: 'approve' }, at).status).toBe('approved');
+  });
+
+  it('changing one segment’s concept or mode never changes another approved segment', async () => {
+    let p = await base();
+    for (const id of ['a1', 'a3', 'a5', 'a6']) p = act(p, id, { type: 'approve' });
+    const before = p.segments.filter((s) => s.status === 'approved');
+    p = act(p, 'a2', { type: 'edit', overrides: { visualMode: 'captions' } });
+    p = act(p, 'a4', { type: 'edit', overrides: { conceptId: 'kinetic-headline' } });
+    const replanned = await planner.plan({ projectId: 'p', profile: profile(), segments: transcript('video-a') }, { now, previous: p });
+    for (const s of before) expect(seg(replanned.plan, s.segmentId)).toEqual(s);
+  });
+});

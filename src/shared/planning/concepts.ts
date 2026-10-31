@@ -2,7 +2,7 @@
 // up", "draw the steps as a flow"), not a look: every concept is styled by the client's profile.
 // `components` names the PR #2 component types it is built from; null means PR #2 can't render it.
 
-import type { ContentKind, VisualConcept } from './types';
+import type { ContentKind, VisualConcept, VisualMode } from './types';
 
 const c = (concept: VisualConcept): VisualConcept => concept;
 
@@ -88,6 +88,35 @@ export function conceptById(id: string): VisualConcept | undefined {
 }
 
 export const CONCEPT_IDS = CONCEPTS.map((x) => x.id);
+
+const MODE_LABEL: Record<VisualMode, string> = {
+  speaker: 'Speaker',
+  'b-roll': 'B-roll',
+  captions: 'Captions',
+  'motion-graphics': 'Motion graphics',
+  'background-graphics': 'Background graphics',
+};
+
+/** Modes that render the same kind of thing: motion and background graphics are interchangeable. */
+export function modeFamily(mode: VisualMode): 'speaker' | 'b-roll' | 'captions' | 'graphics' {
+  return mode === 'motion-graphics' || mode === 'background-graphics' ? 'graphics' : mode;
+}
+
+/**
+ * Why a concept can't be shown in a visual mode, or null when they fit. Each concept belongs to
+ * one kind of mode (a caption treatment can't be a motion graphic and vice versa); a mismatch would
+ * otherwise produce a spec PR #2 rejects, e.g. "transparent-captions" without a captions layer.
+ */
+export function conceptModeIssue(conceptId: string, mode: VisualMode): string | null {
+  const concept = BY_ID.get(conceptId);
+  if (!concept || modeFamily(concept.visualMode) === modeFamily(mode)) return null;
+  const fix = BY_ID.get(MODE_DEFAULT[mode]);
+  return `${concept.label} can't be shown in ${MODE_LABEL[mode]} mode. Switch the visual mode to ${MODE_LABEL[concept.visualMode]}${fix ? `, or pick ${fix.label}` : ''}.`;
+}
+
+export function modeLabel(mode: VisualMode): string {
+  return MODE_LABEL[mode];
+}
 
 /** Default concept per visual mode, used when the editor locks a mode and nothing else fits. */
 export const MODE_DEFAULT: Record<VisualConcept['visualMode'], string> = {
