@@ -1,6 +1,7 @@
 // Editor approval workflow. Suggestions are only proposals: the editor approves, edits, rejects or
 // asks for a new idea. Every change is recorded, and editor choices always win over suggestions.
 
+import { conceptById, conceptModeIssue, MODE_DEFAULT, modeLabel } from './concepts';
 import { PlanningError } from './errors';
 import { hashHex } from './hash';
 import type { ApprovalStatus, ConceptParams, EditorOverrides, EffectiveSegment, PlanningSegmentInput, SegmentPlan, StatusChange } from './types';
@@ -43,6 +44,34 @@ function mergeParams(a: ConceptParams | undefined, b: ConceptParams | undefined)
   return { ...(a ?? {}), ...(b ?? {}) };
 }
 
+/**
+ * Keeps an edit's concept and visual mode compatible. Picking a concept brings its own mode (a
+ * "Kinetic headline" on a Captions segment becomes a motion graphic); picking a mode brings that
+ * mode's default concept. Asking for an impossible pair explicitly is refused with the reason.
+ * Edits that touch neither (params only) are left as they are.
+ */
+export function alignConceptAndMode(plan: SegmentPlan, overrides: EditorOverrides): { overrides: EditorOverrides; note?: string } {
+  if (!overrides.conceptId && !overrides.visualMode) return { overrides };
+  const current = effectiveSegment(plan);
+  const conceptId = overrides.conceptId ?? current.conceptId;
+  const mode = overrides.visualMode ?? current.visualMode;
+  const issue = conceptModeIssue(conceptId, mode);
+  if (!issue) return { overrides };
+  if (overrides.conceptId && overrides.visualMode) throw new PlanningError('INVALID_ACTION', issue);
+  if (overrides.conceptId) {
+    const native = conceptById(conceptId)!.visualMode;
+    return {
+      overrides: { ...overrides, visualMode: native },
+      note: `Concept set to ${conceptById(conceptId)!.label}; visual mode changed to ${modeLabel(native)} to match.`,
+    };
+  }
+  const fallback = MODE_DEFAULT[mode];
+  return {
+    overrides: { ...overrides, conceptId: fallback },
+    note: `Visual mode set to ${modeLabel(mode)}; concept changed to ${conceptById(fallback)?.label ?? fallback} to match.`,
+  };
+}
+
 /** Applies an editor action. Throws INVALID_ACTION for transitions the workflow doesn't allow. */
 export function applyEditorAction(plan: SegmentPlan, action: EditorAction, at: string): SegmentPlan {
   if (!canApply(plan, action.type)) {
@@ -60,14 +89,16 @@ export function applyEditorAction(plan: SegmentPlan, action: EditorAction, at: s
       next.rejectedConcepts = [...new Set([...plan.rejectedConcepts, effectiveConceptId(plan)])];
       next.history.push(change(plan.status, to, 'editor', action.reason ?? 'Rejected', at));
       break;
-    case 'edit':
+    case 'edit': {
+      const { overrides, note } = alignConceptAndMode(plan, action.overrides);
       next.overrides = {
         ...(plan.overrides ?? {}),
-        ...action.overrides,
-        params: mergeParams(plan.overrides?.params, action.overrides.params),
+        ...overrides,
+        params: mergeParams(plan.overrides?.params, overrides.params),
       };
-      next.history.push(change(plan.status, to, 'editor', action.overrides.note ?? 'Edited', at));
+      next.history.push(change(plan.status, to, 'editor', action.overrides.note ?? note ?? 'Edited', at));
       break;
+    }
     case 'request-regeneration':
       next.history.push(change(plan.status, to, 'editor', action.reason ?? 'Asked for a new idea', at));
       break;

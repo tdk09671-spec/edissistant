@@ -192,3 +192,32 @@ describe('caption regressions (found by the end-to-end integration run)', () => 
     expect(cuesOf(adaptSegment({ ...seg, params: { accent: '#ff6600' } }, withAccents(['#111216']), { width: 1920, height: 1080, fps: 25 })).style.highlightColor).toBe('#ff6600');
   });
 });
+
+describe('incompatible concept and mode (regression: Windows INVALID_SPEC)', () => {
+  const eff = (conceptId: string, visualMode: EffectiveSegment['visualMode']): EffectiveSegment => ({
+    segmentId: 'x1', start: 1, end: 4, text: 'Today Northwind serves 1.2 million customers.', conceptId, visualMode, params: { headline: 'Today Northwind serves 1.2 million customers.' }, transition: 'fade', status: 'approved',
+  });
+
+  it('flags the segment with a clear reason instead of building a spec PR #2 rejects', () => {
+    const r = adaptSegment(eff('kinetic-headline', 'captions'), profile(), settings);
+    expect(r).toMatchObject({ status: 'incompatible', reason: expect.stringMatching(/Kinetic headline can't be shown in Captions mode/) });
+    expect(adaptSegment(eff('caption-emphasis', 'motion-graphics'), profile(), settings)).toMatchObject({ status: 'incompatible' });
+    // Same family: renders.
+    expect(adaptSegment(eff('kinetic-headline', 'background-graphics'), profile(), settings).status).toBe('renderable');
+    expect(adaptSegment(eff('caption-emphasis', 'captions'), profile(), settings).status).toBe('renderable');
+    // Speaker and b-roll modes never render a graphic, whatever the concept.
+    expect(adaptSegment(eff('kinetic-headline', 'speaker'), profile(), settings).status).toBe('no-graphic');
+  });
+
+  it('one incompatible segment never stops the others from rendering', async () => {
+    const plan: ProjectPlan = (await new CreativePlanner().plan({ projectId: 'p', profile: profile(), segments: transcript('video-a') }, { now })).plan;
+    const approved: ProjectPlan = { ...plan, segments: plan.segments.map((s) => applyEditorAction(s, { type: 'approve' }, NOW)) };
+    // A plan saved before the fix: overrides that put a motion graphic in Captions mode.
+    const broken: ProjectPlan = { ...approved, segments: approved.segments.map((s) => (s.segmentId === 'a2' ? { ...s, overrides: { conceptId: 'kinetic-headline', visualMode: 'captions' } } : s)) };
+    const before = planToAnimationSpecs(approved, transcript('video-a'), profile(), settings);
+    const after = planToAnimationSpecs(broken, transcript('video-a'), profile(), settings);
+    expect(after.find((r) => r.segmentId === 'a2')?.status).toBe('incompatible');
+    for (const r of after.filter((x) => x.segmentId !== 'a2')) expect(r).toEqual(before.find((b) => b.segmentId === r.segmentId));
+    expect(toSequenceSpec('p', after, settings).segments.every((s) => s.exportMode !== 'transparent-captions' || s.layers.some((l) => l.type === 'captions'))).toBe(true);
+  });
+});
