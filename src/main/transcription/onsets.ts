@@ -9,7 +9,7 @@
 // alone (counted as unchecked) when the audio shows no clear onset.
 
 import * as fs from 'fs';
-import { roundTime, type TranscriptWord } from '../../shared/transcription';
+import { interpolateWords, roundTime, type AnchoredStart, type TranscriptWord } from '../../shared/transcription';
 
 export const FRAME_SECONDS = 0.01;
 
@@ -74,11 +74,13 @@ export interface OnsetResult {
 }
 
 /**
- * Moves each anchored word start to the speech onset inside that word's span. A start that is
- * already in speech is walked back to where that speech began, but not before the previous word.
- * Measured word times (and every word end) are kept.
+ * Moves each anchored segment start to the speech onset in the audio. For token-timed words the
+ * search stays inside the first word (its end is measured); when the segment's word times are
+ * estimates, it searches the whole segment and spreads the words again from the onset. A start that
+ * is already in speech is walked back to where that speech began, but not before the previous word.
+ * Measured word times, and every segment end, are kept.
  */
-export function refineAnchoredStarts(words: readonly TranscriptWord[], anchored: readonly number[], env: Float32Array, frameSeconds = FRAME_SECONDS): OnsetResult {
+export function refineAnchoredStarts(words: readonly TranscriptWord[], anchored: readonly AnchoredStart[], env: Float32Array, frameSeconds = FRAME_SECONDS): OnsetResult {
   const out = words.map((w) => ({ ...w }));
   if (!anchored.length || env.length === 0) return { words: out, refined: 0, unchecked: anchored.length };
   const thr = speechThreshold(env);
@@ -87,11 +89,13 @@ export function refineAnchoredStarts(words: readonly TranscriptWord[], anchored:
   let refined = 0;
   let unchecked = 0;
 
-  for (const i of anchored) {
-    const w = out[i];
+  for (const a of anchored) {
+    const w = out[a.index];
     if (!w) continue;
-    const prevEnd = i > 0 ? out[i - 1].end : 0;
-    const latest = w.end - 0.05; // keep at least 50 ms of the word
+    const last = out[Math.min(out.length, a.index + Math.max(1, a.count)) - 1];
+    const prevEnd = a.index > 0 ? out[a.index - 1].end : 0;
+    // Keep at least 50 ms: of the first word when its end is measured, of the segment when estimated.
+    const latest = (a.estimated ? last.end : w.end) - 0.05;
     let onset: number | null = null;
     if (speech(frameOf(w.start))) {
       // Already in speech: find where it began, at most 0.5 s back and not before the previous word.
@@ -112,10 +116,14 @@ export function refineAnchoredStarts(words: readonly TranscriptWord[], anchored:
       continue;
     }
     const start = roundTime(Math.min(Math.max(onset, prevEnd), Math.max(w.start, latest)));
-    if (Math.abs(start - w.start) >= 0.005) {
+    if (Math.abs(start - w.start) < 0.005) continue;
+    if (a.estimated && a.count > 1) {
+      const spread = interpolateWords(out.slice(a.index, a.index + a.count).map((x) => x.text), start, last.end);
+      spread.forEach((x, k) => Object.assign(out[a.index + k], { start: x.start, end: x.end }));
+    } else {
       w.start = start;
-      refined++;
     }
+    refined++;
   }
   return { words: out, refined, unchecked };
 }

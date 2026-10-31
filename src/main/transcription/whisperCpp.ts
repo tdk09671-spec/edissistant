@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   parseWhisperCppJson,
+  type AnchoredStart,
   TranscriptionError,
   type TranscriptionDevice,
   type TranscriptionDevicePreference,
@@ -33,8 +34,8 @@ export interface EngineOutput {
   wordTiming: WordTiming;
   /** Where word times came from (see ParsedWhisperOutput). */
   timingSource?: 'dtw' | 'tokens' | 'interpolated';
-  /** Indices of words whose start is a segment boundary, not a measured onset. */
-  anchoredStarts?: number[];
+  /** Words whose start is a segment boundary, not a measured onset. */
+  anchoredStarts?: AnchoredStart[];
   end: number;
   device: TranscriptionDevice;
   gpuBackend?: string;
