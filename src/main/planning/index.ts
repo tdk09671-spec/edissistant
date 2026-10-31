@@ -66,10 +66,13 @@ export interface PlanEstimate {
   images: number;
   projectSpent: number;
   monthSpent: number;
+  /** The project's own limits as configured (not lowered to fit the monthly limit). */
   budget: Budget;
   monthlyLimit?: number;
   /** Set when even the upper bound would pass a limit: the run would be refused. */
   blockedBy?: string;
+  /** Set when the project is past, or this run would likely take it past, the "warn at" amount. */
+  warning?: string;
   /** The transcript rows that would be sent. */
   segmentIds: string[];
 }
@@ -95,6 +98,8 @@ export interface RunUsage {
   /** USD estimate; null when a call's model has no price in the table. */
   estimatedCost: number | null;
   models: string[];
+  /** Spending warnings after this run (the "warn at" amount). */
+  warnings: string[];
 }
 
 const monthOf = (iso: string) => iso.slice(0, 7);
@@ -129,6 +134,16 @@ function tighten(base: Budget, call?: Budget): Budget {
   const merged: Budget = { ...base, ...call };
   if (limits.length) merged.hardLimit = Math.min(...limits);
   return merged;
+}
+
+const money = (n: number) => `$${n.toFixed(2)}`;
+
+/** The "warn at" message for a project's spend, or undefined. */
+function softWarning(spent: number, soft: number | undefined, next = 0): string | undefined {
+  if (soft === undefined) return undefined;
+  if (spent >= soft) return `This project’s Claude spend (${money(spent)}) has passed your warning amount of ${money(soft)}.`;
+  if (next > 0 && spent + next > soft) return `This run would likely take the project past your warning amount of ${money(soft)} (${money(spent)} spent so far).`;
+  return undefined;
 }
 
 export class PlanningService {
@@ -265,9 +280,10 @@ export class PlanningService {
       images: opts.references?.images.length ?? 0,
       projectSpent: Math.round(projectSpent * 1e4) / 1e4,
       monthSpent: Math.round(monthSpent * 1e4) / 1e4,
-      budget,
+      budget: settings.budget,
       ...(monthlyLimit !== undefined ? { monthlyLimit } : {}),
       ...(blockedBy ? { blockedBy } : {}),
+      ...(softWarning(projectSpent, settings.budget.softLimit, expected) ? { warning: softWarning(projectSpent, settings.budget.softLimit, expected) } : {}),
       segmentIds: probe.request?.segments.map((x) => x.segmentId) ?? [],
     };
   }
@@ -342,8 +358,18 @@ export class PlanningService {
         cacheCreationInputTokens: sum((e) => e.cacheCreationInputTokens),
         estimatedCost: entries.some((e) => e.estimatedCost === null) ? null : Math.round(sum((e) => e.estimatedCost ?? 0) * 1e6) / 1e6,
         models: [...new Set(entries.map((e) => e.model))],
+        warnings: entries.length ? [softWarning(tracker.spent, settings.budget.softLimit)].filter((w): w is string => Boolean(w)) : [],
       };
       return { ...result, warnings: [...settings.warnings, ...result.warnings], cost: tracker.report(), run };
+    } catch (error) {
+      // The tracker only knows "the limit"; say which one it was.
+      const monthly = settings.config.state === 'ok' ? settings.config.config.monthlyLimit : undefined;
+      const project = settings.budget.hardLimit;
+      const effectiveLimit = effective.budget.hardLimit;
+      if (error instanceof PlanningError && error.code === 'BUDGET_EXCEEDED' && monthly !== undefined && effectiveLimit !== undefined && (project === undefined || effectiveLimit < project)) {
+        throw new PlanningError('BUDGET_EXCEEDED', `This request could pass your monthly limit of ${money(monthly)} (${money(this.monthSpent(this.options.now?.()))} spent this month across all projects).`, { retryable: false });
+      }
+      throw error;
     } finally {
       // Whatever happened, every billed response is recorded (a failed run still costs money).
       this.store.appendUsage(tracker.usageEntries().slice(before));

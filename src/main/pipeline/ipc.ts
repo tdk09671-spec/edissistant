@@ -121,7 +121,17 @@ function references(v: unknown): PlanReferences {
     if (!Array.isArray(x) || x.length > max) throw new Invalid(`${what} must be a list (at most ${max}).`);
     return x.map((s, i) => str(s, `${what}[${i}]`, chars));
   };
-  return { notes: list(r.notes, 'references.notes', 50, 4_000), imagePaths: list(r.imagePaths, 'references.imagePaths', 10, 4_096) };
+  let brief: PlanReferences['brief'];
+  if (r.brief !== undefined) {
+    const b = obj(r.brief, 'references.brief');
+    brief = {};
+    for (const k of ['creativeBrief', 'brandingNotes', 'projectNotes'] as const) {
+      if (b[k] === undefined) continue;
+      if (typeof b[k] !== 'boolean') throw new Invalid(`references.brief.${k} must be true or false.`);
+      brief[k] = b[k] as boolean;
+    }
+  }
+  return { notes: list(r.notes, 'references.notes', 50, 4_000), imagePaths: list(r.imagePaths, 'references.imagePaths', 10, 4_096), ...(brief ? { brief } : {}) };
 }
 
 function action(v: unknown): EditorAction {
@@ -206,7 +216,7 @@ export function registerPipelineIpc(ipcMain: IpcMain, service: PipelineService, 
     if (!request.useModel) return service.plan(request);
     await ai.assertCanRun();
     if (busy.has(request.projectId)) throw new AiError('BUSY', 'A Claude run for this project is already in progress.');
-    const refs = ai.references(request.references);
+    const refs = ai.references(request.references, request);
     const controller = new AbortController();
     if (request.jobId) jobs.set(request.jobId, controller);
     busy.add(request.projectId);
@@ -223,7 +233,7 @@ export function registerPipelineIpc(ipcMain: IpcMain, service: PipelineService, 
   ipcMain.handle('pipeline:estimate', (_e, request: unknown) =>
     wrap(async () => {
       const r = planRequest(request);
-      const estimate = await service.estimate(r, ai.references(r.references));
+      const estimate = await service.estimate(r, ai.references(r.references, r));
       const blocked = await ai.blocked();
       return blocked ? { ...estimate, blockedBy: blocked } : estimate;
     })

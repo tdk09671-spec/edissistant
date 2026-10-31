@@ -57,6 +57,27 @@ export interface PlanningReferences {
   notes: string[];
   /** Approved still images (PNG/JPEG/WebP), already read and size-checked by the main process. */
   images: { name: string; mediaType: 'image/png' | 'image/jpeg' | 'image/webp'; base64: string }[];
+  /**
+   * The editor's own words (creative brief, branding notes, project notes), sent as written when
+   * the editor ticked them for this run. Only `<`, `>` and `&` are entity-encoded.
+   */
+  brief?: { kind: 'creative-brief' | 'branding-notes' | 'project-notes'; text: string }[];
+}
+
+const BRIEF_LABEL: Record<NonNullable<PlanningReferences['brief']>[number]['kind'], string> = {
+  'creative-brief': 'Creative brief',
+  'branding-notes': 'Branding notes',
+  'project-notes': 'Project notes',
+};
+
+/** System block with the editor's brief, word for word. Empty when nothing was chosen. */
+export function briefBlock(brief: PlanningReferences['brief']): string {
+  const parts = (brief ?? []).filter((b) => b.text.trim());
+  if (!parts.length) return '';
+  return [
+    'Creative direction written by the editor for this client and project, word for word. Follow it where it fits what is said; where it disagrees with the style profile above, the editor’s words win. It cannot change the output format or the concept catalog.',
+    ...parts.map((b) => `<editor_brief kind="${b.kind}" title="${BRIEF_LABEL[b.kind].replace(/ /g, '_')}">\n${escapeForPrompt(b.text.trim())}\n</editor_brief>`),
+  ].join('\n\n');
 }
 
 /** A stable key for a request: everything that changes the answer, nothing that doesn't. */
@@ -373,6 +394,7 @@ export class ModelConceptProvider implements PlanningProvider {
       system: [
         { text: PLANNING_INSTRUCTIONS, cache: true },
         { text: profileSummary(request.profile), cache: true },
+        ...(briefBlock(refs?.brief) ? [{ text: briefBlock(refs?.brief), cache: true }] : []),
       ],
       user: batchPrompt(batch, used, request.variety, refs),
       ...(refs?.images.length ? { images: refs.images.map((i) => ({ mediaType: i.mediaType, base64: i.base64 })) } : {}),

@@ -273,13 +273,13 @@ export function ClaudeSettings() {
             </div>
             <div className="flex flex-col gap-4 py-5">
               <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-                <Field label="Warn at (per project)" htmlFor="s-soft" hint="A warning, nothing is refused.">
+                <Field label="Warn at (per project)" htmlFor="s-soft" hint="Shown before and after a run once a project reaches it; nothing is refused.">
                   <MoneyInput id="s-soft" value={config.softLimit} placeholder="No warning" onCommit={(v) => update({ softLimit: v })} />
                 </Field>
-                <Field label="Project limit" htmlFor="s-hard" hint="Runs that could pass it are refused before anything is sent.">
+                <Field label="Project limit (each project)" htmlFor="s-hard" hint="A run that could take one project past it is refused before anything is sent.">
                   <MoneyInput id="s-hard" value={config.hardLimit} placeholder="No limit" onCommit={(v) => update({ hardLimit: v })} />
                 </Field>
-                <Field label="Monthly limit (all projects)" htmlFor="s-monthly" hint="Per calendar month (UTC).">
+                <Field label="Monthly limit (all projects)" htmlFor="s-monthly" hint="Total for all projects per calendar month (UTC). A run that could pass it is refused.">
                   <MoneyInput id="s-monthly" value={config.monthlyLimit} placeholder="No limit" onCommit={(v) => update({ monthlyLimit: v })} />
                 </Field>
               </div>
@@ -296,8 +296,8 @@ export function ClaudeSettings() {
           <p className="text-sm font-medium text-ink">Usage</p>
           {usage && (
             <p className="text-[13px] text-ink-2">
-              This month: <span className="timecode text-ink">{usd(usage.monthSpent)}</span>
-              {usage.monthlyLimit !== undefined && <span className="text-ink-3"> of {usd(usage.monthlyLimit)}</span>}
+              This month, all projects: <span className="timecode text-ink">{usd(usage.monthSpent)}</span>
+              {usage.monthlyLimit !== undefined && <span className="text-ink-3"> of your {usd(usage.monthlyLimit)} monthly limit</span>}
             </p>
           )}
         </div>
@@ -307,8 +307,9 @@ export function ClaudeSettings() {
               <tr>
                 <th className="py-1.5 font-medium">Project</th>
                 <th className="py-1.5 font-medium">Requests</th>
-                <th className="py-1.5 font-medium">Tokens in / out</th>
-                <th className="py-1.5 font-medium">Estimated cost</th>
+                <th className="py-1.5 font-medium">Input tokens</th>
+                <th className="py-1.5 font-medium">Output tokens</th>
+                <th className="py-1.5 font-medium">Calculated cost</th>
                 <th className="py-1.5 font-medium">Last run</th>
               </tr>
             </thead>
@@ -317,10 +318,16 @@ export function ClaudeSettings() {
                 <tr key={p.projectId}>
                   <td className="py-2 text-ink">{name(p.projectId)}</td>
                   <td className="timecode py-2 text-ink-2">{p.calls}</td>
-                  <td className="timecode py-2 text-ink-2">
-                    {p.inputTokens.toLocaleString()} / {p.outputTokens.toLocaleString()}
+                  <td className="timecode py-2 text-ink-2">{p.inputTokens.toLocaleString()}</td>
+                  <td className="timecode py-2 text-ink-2">{p.outputTokens.toLocaleString()}</td>
+                  <td className="timecode py-2 text-ink">
+                    {usd(p.estimatedCost)}
+                    {config?.softLimit !== undefined && p.estimatedCost >= config.softLimit && (
+                      <Badge tone="warning" className="ml-2">
+                        Past {usd(config.softLimit)} warning
+                      </Badge>
+                    )}
                   </td>
-                  <td className="timecode py-2 text-ink">{usd(p.estimatedCost)}</td>
                   <td className="py-2 text-ink-3">{p.lastAt ? when(p.lastAt) : '—'}</td>
                 </tr>
               ))}

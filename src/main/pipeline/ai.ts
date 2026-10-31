@@ -8,7 +8,7 @@ import * as path from 'path';
 import type { PlanningConfig } from '../../shared/planning/config';
 import { DEFAULT_PRICING } from '../../shared/planning/cost';
 import { DEFAULT_MODELS, type PlanningReferences } from '../../shared/planning/modelProvider';
-import type { AiConfig, AiConfigUpdate, AiConnection, AiProvider, AiStatus, AiUsage, PlanReferences } from '../../shared/pipeline/types';
+import type { AiConfig, AiConfigUpdate, AiConnection, AiProvider, AiStatus, AiUsage, PlanReferences, ProjectPlanningInput } from '../../shared/pipeline/types';
 import { testAnthropicConnection } from '../planning/anthropicTransport';
 import type { PlanningService } from '../planning';
 
@@ -246,8 +246,17 @@ export class AiService {
    * must be PNG, JPEG or WebP files (checked by content, not just the name) under the size limit.
    * Nothing else is read, and videos are never accepted.
    */
-  references(raw: PlanReferences | undefined): PlanningReferences | undefined {
+  references(raw: PlanReferences | undefined, input?: Pick<ProjectPlanningInput, 'preset' | 'notes'>): PlanningReferences | undefined {
     if (!raw) return undefined;
+    // The editor's own words, taken from the same request the plan is made from (never from a
+    // separate field), and only the ones ticked in the dialog.
+    const brief: NonNullable<PlanningReferences['brief']> = [];
+    const pick = (on: boolean | undefined, kind: NonNullable<PlanningReferences['brief']>[number]['kind'], text: string | undefined) => {
+      if (on && text?.trim()) brief.push({ kind, text });
+    };
+    pick(raw.brief?.creativeBrief, 'creative-brief', input?.preset.creativeBrief);
+    pick(raw.brief?.brandingNotes, 'branding-notes', input?.preset.brandingNotes);
+    pick(raw.brief?.projectNotes, 'project-notes', input?.notes);
     const notes = raw.notes.map((n) => n.trim()).filter(Boolean);
     if (notes.length > REFERENCE_LIMITS.notes) throw new AiError('INVALID_REFERENCE', `At most ${REFERENCE_LIMITS.notes} reference notes can be sent.`);
     for (const n of notes) {
@@ -274,6 +283,6 @@ export class AiService {
       if (!sniff(data.subarray(0, 16), mediaType)) throw new AiError('INVALID_REFERENCE', `${name} isn't a valid ${mediaType.slice(6).toUpperCase()} image.`);
       return { name, mediaType, base64: data.toString('base64') };
     });
-    return { notes, images };
+    return { notes, images, ...(brief.length ? { brief } : {}) };
   }
 }

@@ -8,7 +8,7 @@ import { buildStyleProfile, type PresetLike } from '../../shared/planning/styleP
 import type { PlanResult } from '../../shared/planning/planner';
 import type { StyleProfile } from '../../shared/planning/types';
 import { buildSequence, presetWithNotes, segmentUpdates, toPlanningInputs } from '../../shared/pipeline/convert';
-import type { PlanningReferences } from '../../shared/planning/modelProvider';
+import { profileSummary, type PlanningReferences } from '../../shared/planning/modelProvider';
 import type { ActRequest, BuildRequest, BuildResponse, PlanEstimate, PlanOutcome, PlanRequest, ProjectPlanningInput, RunUsage } from '../../shared/pipeline/types';
 import { EDITOR_RUN_POLICY, PlanningService, type PlanningServiceOptions } from '../planning';
 
@@ -74,7 +74,7 @@ export class PipelineService {
   async estimate(request: PlanRequest, references?: PlanningReferences): Promise<PlanEstimate> {
     const profile = this.profile(request);
     const e = await this.planning.estimate(this.planningRequest(request, profile), { allowReplan: request.allowReplan, references });
-    return { ...e, budget: { ...(e.budget.softLimit !== undefined ? { softLimit: e.budget.softLimit } : {}), ...(e.budget.hardLimit !== undefined ? { hardLimit: e.budget.hardLimit } : {}) } };
+    return { ...e, styleSummary: profileSummary(profile), budget: { ...(e.budget.softLimit !== undefined ? { softLimit: e.budget.softLimit } : {}), ...(e.budget.hardLimit !== undefined ? { hardLimit: e.budget.hardLimit } : {}) } };
   }
 
   /** Plans new and changed rows; approved and edited rows are kept (see PR #3 replanning rules). */

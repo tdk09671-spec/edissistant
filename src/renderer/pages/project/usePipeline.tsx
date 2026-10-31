@@ -276,13 +276,21 @@ export function usePipeline(
         const fromClaude = outcome.updates.filter((u) => planned.has(u.id) && u.plan.source === 'model').length;
         const local = outcome.planned.length - fromClaude;
         const r = outcome.run;
-        const tokens = r ? `${r.calls} request(s) · ${r.inputTokens.toLocaleString()} input / ${r.outputTokens.toLocaleString()} output tokens · estimated ${usd(r.estimatedCost)}` : '';
-        const cached = r?.cachedRequests ? ` · ${r.cachedRequests} answered from earlier identical requests (not sent, not billed)` : '';
+        let usage = '';
+        if (r) {
+          // Input counts everything Anthropic read, including prompt-cache reads and writes.
+          const input = r.inputTokens + r.cacheReadInputTokens + r.cacheCreationInputTokens;
+          const cache = r.cacheReadInputTokens ? ` (${r.cacheReadInputTokens.toLocaleString()} read from the prompt cache)` : '';
+          usage = `${r.calls} request(s) sent · input ${input.toLocaleString()} tokens${cache} · output ${r.outputTokens.toLocaleString()} tokens · cost calculated from these counts: ${usd(r.estimatedCost)}`;
+          if (r.cachedRequests) usage += ` · ${r.cachedRequests} answered from earlier identical requests (not sent, not billed)`;
+          usage += '.';
+        }
         const localNote = local ? ` ${local} row(s) kept a local suggestion where it fitted better or Claude gave none.` : '';
+        const warning = r?.warnings.length ? ` ${r.warnings.join(' ')}` : '';
         setNotice({
           title: `Claude suggested visuals for ${fromClaude} segment(s)`,
-          message: `${tokens}${cached}.${localNote} Review each row, then approve.`,
-          tone: 'success',
+          message: `${usage}${localNote} Review each row, then approve.${warning}`,
+          tone: warning ? 'warning' : 'success',
         });
         return true;
       });

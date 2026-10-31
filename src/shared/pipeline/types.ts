@@ -105,6 +105,11 @@ export interface PlanRequest extends ProjectPlanningInput {
 export interface PlanReferences {
   notes: string[];
   imagePaths: string[];
+  /**
+   * Which of the editor's own texts go to Claude word for word (from the request's preset and
+   * notes; nothing is sent unless ticked).
+   */
+  brief?: { creativeBrief?: boolean; brandingNotes?: boolean; projectNotes?: boolean };
 }
 
 /** What one Claude run sent and cost (estimates from the token counts Anthropic returned). */
@@ -117,6 +122,8 @@ export interface RunUsage {
   cacheCreationInputTokens: number;
   estimatedCost: number | null;
   models: string[];
+  /** Spending warnings after this run (the "warn at" amount). */
+  warnings: string[];
 }
 
 /** pipeline:estimate: what a Claude run would send and cost, worked out locally (nothing is sent). */
@@ -134,12 +141,17 @@ export interface PlanEstimate {
   images: number;
   projectSpent: number;
   monthSpent: number;
+  /** The project's own limits as configured (not lowered to fit the monthly limit). */
   budget: { softLimit?: number; hardLimit?: number };
   monthlyLimit?: number;
   /** Set when the run would be refused (a limit, invalid settings, no key, provider off). */
   blockedBy?: string;
+  /** Set when the project is past, or this run would likely take it past, the "warn at" amount. */
+  warning?: string;
   /** Transcript rows that would be sent (ids), so the consent dialog can say exactly what goes out. */
   segmentIds: string[];
+  /** The style summary that is always sent (derived from the preset), exactly as it will be sent. */
+  styleSummary: string;
 }
 
 export type AiProvider = 'local' | 'anthropic';
