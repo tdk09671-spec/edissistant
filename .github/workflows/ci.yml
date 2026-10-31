@@ -73,6 +73,12 @@ jobs:
       - name: Clean install (npm ci, exact versions from package-lock.json)
         run: npm ci
 
+      # Electron 45 has no install script: it downloads its binary the first time something
+      # requires it, which would be inside the first E2E test (and after the sandbox step below).
+      # Fetch it now; Electron's installer verifies it against the package's checksums.json.
+      - name: Download the Electron binary
+        run: npx --no install-electron
+
       - name: Check the test environment
         run: node scripts/ci/check-env.mjs --require-media --require-non-root
 
@@ -160,6 +166,12 @@ jobs:
 
       - name: Clean install (npm ci, exact versions from package-lock.json)
         run: npm ci
+
+      # Electron 45 has no install script: it downloads its binary the first time something
+      # requires it, which would be inside the first E2E test (and after the sandbox step below).
+      # Fetch it now; Electron's installer verifies it against the package's checksums.json.
+      - name: Download the Electron binary
+        run: npx --no install-electron
 
       # Report only: FFmpeg isn't installed here, so the FFmpeg tests skip (allowed per file in
       # scripts/ci/allowed-skips.json) and run in the Linux job instead.
