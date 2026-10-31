@@ -36,10 +36,10 @@ export interface Launched {
   errors: string[];
 }
 
-export async function launch(appData: string): Promise<Launched> {
+export async function launch(appData: string, env: Record<string, string> = {}): Promise<Launched> {
   const app = await electron.launch({
     args: [LAUNCHER],
-    env: { ...process.env, EDISSISTANT_TEST_APPDATA: appData } as Record<string, string>,
+    env: { ...process.env, ...env, EDISSISTANT_TEST_APPDATA: appData } as Record<string, string>,
   });
   const page = await app.firstWindow();
   const errors: string[] = [];
