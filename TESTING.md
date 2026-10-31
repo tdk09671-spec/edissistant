@@ -17,22 +17,32 @@ npm run test:e2e  # builds, then drives the real Electron app with Playwright
 - On failure, Playwright keeps a trace and a screenshot in `test-results/` (`npx playwright show-trace <trace.zip>`). An HTML report goes to `playwright-report/`.
 - The E2E tests need a desktop session. Cloud or headless Linux sessions can run `npm run test:unit`, `npm run typecheck` and `npm run build`. Running E2E there would need `xvfb-run` and is untested.
 
-## Test log v4: end-to-end integration (Linux, 2026-10-30)
+## Test log v4: end-to-end integration (Linux, 2026-10-31)
 
-Branch `feature/end-to-end-integration` (PR #1 `143ea40` + PR #2 `ba7c9aa` + PR #3 `1c77fc0` merged into `main` `ec16bac`). Linux cloud container, Node 22, FFmpeg 6.1.1, Electron 45, E2E under `xvfb-run -a`, running as root. **Not yet run on Windows.** The checklist is in [docs/INTEGRATION.md](docs/INTEGRATION.md#windows-validation-checklist-integrated-app).
+This is branch `feature/end-to-end-integration`. Its base is `main` `ec16bac`, with these merged in:
+- PR #1 `143ea40`
+- PR #2 `178c793`
+- PR #3 `922e972`
+- #5 `c8a80b2`
+
+Environment: Linux cloud container, Node 22, FFmpeg 6.1.1, Electron 45, with E2E under `xvfb-run -a`.
+**Not yet run on Windows.** The checklist is in [docs/INTEGRATION.md](docs/INTEGRATION.md#windows-validation-checklist-integrated-app).
 
 | Command | Result |
 | --- | --- |
 | `npm run typecheck` | pass |
 | `npm run build` | pass |
-| `npm run test:unit` | **391 passed, 2 skipped** (40 files; 34 new in `tests/unit/pipeline/`) |
-| `xvfb-run -a npx playwright test` | **30 passed, 4 failed** (34 tests, 7.0 min) |
+| `npm run test:unit` | **398 passed, 2 skipped** (41 files) |
+| `xvfb-run -a npx playwright test` as a **non-root** user | **34/34 passed** (4.7 min) |
+| the same, as root | 30 passed, 4 failed (PR #1 `launcher.spec.ts`) |
 
-- The 4 failures are PR #1's `launcher.spec.ts`. It starts Electron directly, and Electron refuses to run as root without `--no-sandbox`. This is an artefact of the container: PR #1 alone fails the same way here, and PR #1 recorded these tests passing on Windows.
-- PR #2's `rendering.spec.ts:167` (sandbox probe) is intermittent in this container. Its 6 s render sometimes finishes before the test cancels it. It passed in this run, and it fails at the same rate without this branch.
-- New `pipeline.spec.ts` (2 tests): the full vertical slice through the real UI, and the failure paths (cancel, missing model, missing media). Footage is synthetic (flite speech, 29.97 fps). The stand-in is `whisper-cli`, PR #1's fake engine fed that speech's transcript. Everything else is real.
+- **Running as root.** Electron refuses to start as root without `--no-sandbox`, and `launcher.spec.ts` starts Electron directly. Run as a normal user, with no flags changed, all 34 pass: Chromium's sandbox uses unprivileged user namespaces. Nothing was weakened to get there. Run the E2E suite as a normal user (as on Windows).
+- **New `pipeline.spec.ts` (2 tests).** It covers the full vertical slice through the real UI, and the failure paths: cancel, missing model and missing media.
+  - Every full-frame graphic must be on screen from exactly its first frame through its last, with footage on the frames on either side, at 30000/1001.
+  - The footage is synthetic (flite speech, 29.97 fps).
+  - The one stand-in is `whisper-cli`: PR #1's fake engine fed that speech's transcript.
 
-
+## Test log v3: local transcription (2026-10-28)
 
 Linux cloud container, Node 22.22.0, FFmpeg 6.1.1, Electron 45 (E2E under `xvfb-run -a`). Not yet run on Windows.
 

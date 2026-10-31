@@ -241,10 +241,10 @@ Everything else is real:
 - FFmpeg encoding and composition
 - export copy and FFprobe verification
 
-**Linux results (2026-10-30):**
-- typecheck and build pass
-- unit tests: 391 passed, 2 skipped
-- E2E: 30 passed, 4 failed. The 4 are PR #1's `launcher.spec.ts`, which can't start Electron as root in this container (details in [TESTING.md](../TESTING.md)).
+**Linux results (2026-10-31):**
+- Typecheck and build pass.
+- Unit tests: 398 passed, 2 skipped.
+- E2E: 34/34 passed as a normal user. As root, PR #1's 4 `launcher.spec.ts` tests fail because Electron refuses root without `--no-sandbox` (details in [TESTING.md](../TESTING.md)).
 
 ## Windows validation checklist (integrated app)
 
