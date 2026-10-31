@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { composePreview, compositionArgs } from '../../../src/main/render/compose';
-import { fpsRational, secondsToFrames } from '../../../src/shared/animation';
+import { fpsRational, secondsToFrames, segmentFrames } from '../../../src/shared/animation';
 import { ffmpeg, hasFfmpeg, tempDir } from './helpers';
 
 // Graphics must land on exactly their frames in the composed preview. At NTSC rates a frame's time
@@ -30,7 +30,10 @@ describe('composition boundaries (filter graph)', () => {
         const duration = Math.round((1 + (k % 7) * 0.371) * 1000) / 1000;
         const { tb, first: placed, from, to } = boundaries(fps, { start, duration });
         const first = secondsToFrames(start, fps);
-        const count = Math.max(1, secondsToFrames(duration, fps));
+        // Out-point on round(end·fps): the duration is never rounded on its own.
+        const end = secondsToFrames(start + duration, fps);
+        const count = end - first;
+        expect(segmentFrames(start, duration, fps).count).toBe(count);
         // Clip frame k is stamped first + k in a time base of exactly one frame: no rounding.
         expect(tb).toEqual([den, num]);
         expect(placed).toBe(first);

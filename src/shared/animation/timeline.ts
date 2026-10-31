@@ -46,8 +46,31 @@ export function frameToSeconds(frame: number, fps: number): number {
   return (frame * r.den) / r.num;
 }
 
+/** Frames that cover a duration on its own (a whole sequence, which starts at frame 0). */
 export function frameCount(duration: number, fps: number): number {
   return Math.max(1, secondsToFrames(duration, fps));
+}
+
+export interface FrameSpan {
+  /** First frame on the timeline. */
+  first: number;
+  /** One past the last frame: the next segment can start here. */
+  end: number;
+  /** end - first, at least 1. */
+  count: number;
+}
+
+/**
+ * The frames a segment occupies on the timeline. Its start and its end are each snapped to the
+ * nearest frame of the same grid, and the frame count is the difference. Rounding the duration on
+ * its own instead (round(start·fps) + round(duration·fps)) puts the last frame one frame early or
+ * late whenever the two rounding errors add up past half a frame: back-to-back graphics then
+ * overlap or leave a gap, and the out-point is off by one in an NLE.
+ */
+export function segmentFrames(start: number, duration: number, fps: number): FrameSpan {
+  const first = secondsToFrames(start, fps);
+  const end = Math.max(first + 1, secondsToFrames(start + duration, fps));
+  return { first, end, count: end - first };
 }
 
 /** Exact duration of `frames` frames. */

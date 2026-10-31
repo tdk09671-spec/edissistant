@@ -37,6 +37,17 @@ describe('diffSequences', () => {
     expect(diffSequences(null, after).added).toEqual(['intro', 'stats', 'outro', 'new']);
   });
 
+  it('re-renders a moved segment when the move changes its frame count, and reuses it otherwise', () => {
+    // 25 fps, 1.3 s long. From 0.00: frames 0–32 (33). From 0.04: frames 1–33 (33, same length).
+    // From 0.02: the start rounds up to frame 1 (0.5) but the end is exactly frame 33: frames 1–32 (32).
+    const at = (start: number) => ({ ...spec('s', start), duration: 1.3 });
+    expect(diffSequences(sequence([at(0)]), sequence([at(0.04)])).moved).toEqual(['s']);
+    expect(diffSequences(sequence([at(0)]), sequence([at(0.02)])).changed).toEqual(['s']);
+    const id = (s: AnimationSpec) => renderIdentity(s, { format: 'prores-4444', scale: 1 }, {});
+    expect(id(at(0))).toBe(id(at(0.04)));
+    expect(id(at(0))).not.toBe(id(at(0.02)));
+  });
+
   it('replaces one segment and leaves the others untouched', () => {
     const before = sequence([spec('a', 0), spec('b', 5)]);
     const next = replaceSegment(before, spec('b', 5, '#00ff00'));

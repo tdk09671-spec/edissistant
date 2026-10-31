@@ -17,7 +17,7 @@ import {
   type SandboxCommand,
   type SandboxMessage,
 } from '../../shared/animation/sandboxProtocol';
-import { frameCount } from '../../shared/animation/timeline';
+import { segmentFrames } from '../../shared/animation/timeline';
 import type { FrameJob, FrameSource, FrameSourceFactory } from './frameSource';
 
 export const SANDBOX_PARTITION = 'edissistant-render-sandbox';
@@ -80,7 +80,7 @@ class ChromiumFrameSource implements FrameSource {
   private readonly frameBytes: number;
 
   constructor(private readonly job: FrameJob, private readonly page: SandboxPage, private readonly preload: string) {
-    this.total = frameCount(job.spec.duration, job.spec.fps);
+    this.total = segmentFrames(job.spec.start, job.spec.duration, job.spec.fps).count;
     this.frameBytes = job.width * job.height * 4;
   }
 

@@ -17,6 +17,7 @@ import {
   resolveColor,
   resolveNumber,
   secondsToFrames,
+  segmentFrames,
   toCss,
   type CaptionCue,
 } from '../../../src/shared/animation';
@@ -41,6 +42,37 @@ describe('frame math', () => {
     expect(frameToSeconds(30, 29.97)).toBeCloseTo(1.001, 9);
     expect(secondsToFrames(1.001, 29.97)).toBe(30);
     for (let f = 0; f < 2000; f += 37) expect(secondsToFrames(frameToSeconds(f, 59.94), 59.94)).toBe(f);
+  });
+
+  // Windows validation round 2 (a6fe66f): ProRes clips at 6.18–12.0 s had 146 frames at 25 fps
+  // instead of 145, and 174 at 29.97 instead of 175, because the duration was rounded on its own.
+  it('spans a segment from its rounded start to its rounded end, as measured in the Windows test', () => {
+    expect(segmentFrames(6.18, 12.0 - 6.18, 25)).toEqual({ first: 155, end: 300, count: 145 });
+    expect(segmentFrames(18.11, 22.77 - 18.11, 25)).toEqual({ first: 453, end: 569, count: 116 });
+    expect(segmentFrames(6.18, 12.0 - 6.18, 29.97)).toEqual({ first: 185, end: 360, count: 175 });
+    // The old count differs in exactly these cases.
+    expect(frameCount(12.0 - 6.18, 25)).toBe(146);
+    expect(frameCount(12.0 - 6.18, 29.97)).toBe(174);
+    // Never zero frames, even for a sliver that rounds to one frame boundary.
+    expect(segmentFrames(1.01, 0.02, 25)).toEqual({ first: 25, end: 26, count: 1 });
+  });
+
+  it('tiles back-to-back segments with no overlap or gap and keeps every out-point on round(end·fps) − 1', () => {
+    for (const fps of [23.976, 24, 25, 29.97, 30, 50, 59.94]) {
+      let start = 0.137;
+      for (let k = 0; k < 400; k++) {
+        const duration = Math.round((0.31 + ((k * 0.7919) % 4.2)) * 1000) / 1000;
+        const span = segmentFrames(start, duration, fps);
+        const next = segmentFrames(start + duration, 1, fps);
+        expect(span.first, `fps ${fps} start ${start}`).toBe(secondsToFrames(start, fps));
+        expect(span.end - 1).toBe(secondsToFrames(start + duration, fps) - 1);
+        expect(next.first).toBe(span.end);
+        // The last frame's own time stays inside the segment, so layers ending at the segment end
+        // are still drawn on it.
+        expect(frameToSeconds(span.count - 1, fps)).toBeLessThan(duration);
+        start = Math.round((start + duration) * 1000) / 1000;
+      }
+    }
   });
 
   it('formats timecode and progress', () => {

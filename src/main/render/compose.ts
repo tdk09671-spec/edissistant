@@ -1,5 +1,5 @@
 import { cancelled, RenderError } from '../../shared/animation/errors';
-import { fpsRational, fpsString, frameToSeconds, secondsToFrames } from '../../shared/animation/timeline';
+import { fpsRational, fpsString, frameToSeconds, secondsToFrames, segmentFrames } from '../../shared/animation/timeline';
 import { runTool } from './process';
 
 export interface CompositionClip {
@@ -59,8 +59,7 @@ export function compositionArgs(req: CompositionRequest): string[] {
   const { num, den } = fpsRational(req.fps);
   const half = (0.5 * den) / num;
   req.clips.forEach((clip, i) => {
-    const firstFrame = secondsToFrames(clip.start, req.fps);
-    const frames = Math.max(1, secondsToFrames(clip.duration, req.fps));
+    const { first: firstFrame, count: frames } = segmentFrames(clip.start, clip.duration, req.fps);
     const from = (frameToSeconds(firstFrame, req.fps) - half).toFixed(6);
     const to = (frameToSeconds(firstFrame + frames, req.fps) - half).toFixed(6);
     filters.push(`[${i + 1}:v]scale=${w}:${h},format=yuva444p,settb=${den}/${num},setpts=N+${firstFrame}[clip${i}]`);

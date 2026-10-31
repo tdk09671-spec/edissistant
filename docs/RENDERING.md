@@ -146,7 +146,13 @@ TypeScript types: `src/shared/animation/types.ts`. Examples: `tests/fixtures/ani
 ### Timing conventions
 
 - Frame `f` represents the instant `f / fps` (its leading edge). NTSC rates use exact rationals
-  (29.97 = 30000/1001). A segment has `round(duration × fps)` frames.
+  (29.97 = 30000/1001).
+- A segment covers timeline frames `round(start × fps)` through `round((start + duration) × fps) − 1`
+  (`segmentFrames` in `src/shared/animation/timeline.ts`). The start and the end are snapped to the same
+  grid and the frame count is their difference; the duration is never rounded on its own. That
+  keeps back-to-back segments free of overlaps and gaps and puts every out-point on its exact frame. The
+  rendered clip, the preview composition and the render cache key all use this span, so moving a
+  segment re-renders it only when the move changes its frame count (render engine version 2).
 - A caption cue is visible on frames whose time satisfies `start ≤ t < end`. Entrance progress includes the
   frame's own duration, so a cue is visible from its exact first frame. Tests check frames 4/5/24/25 of a
   0.2–1.0 s cue at 25 fps.
