@@ -209,7 +209,11 @@ test('transcribe → plan → approve → render → export → reopen → revis
     expect(changed(frame(render.previewPath, at(first - 1)), frame(VIDEO, at(first - 1)))).toBeLessThan(0.02);
     const mid = Math.round(((seg.start + seg.end) / 2) * fps);
     if (changed(frame(render.previewPath, at(mid)), frame(VIDEO, at(mid))) > 0.3) {
+      // A full-frame graphic: on screen from its first frame through its last, footage on the next.
+      const last = first + Math.max(1, Math.round((Math.round((seg.end - seg.start) * 1000) / 1000) * fps)) - 1;
       expect(changed(frame(render.previewPath, at(first)), frame(VIDEO, at(first)))).toBeGreaterThan(0.3);
+      expect(changed(frame(render.previewPath, at(last)), frame(VIDEO, at(last))), `last frame ${last}`).toBeGreaterThan(0.3);
+      expect(changed(frame(render.previewPath, at(last + 1)), frame(VIDEO, at(last + 1))), `frame after ${last}`).toBeLessThan(0.02);
       exact++;
     }
   }

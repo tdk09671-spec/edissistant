@@ -10,11 +10,13 @@ pipeline, and PR #3's local deterministic planner. It is not a UI simulation.
 | Engine | Branch | Commit integrated |
 | --- | --- | --- |
 | PR #1 Local transcription | `feature/local-transcription` | `143ea40` |
-| PR #2 Animation & rendering | `feature/animation-rendering` | `ba7c9aa` |
-| PR #3 Creative planning | `feature/creative-planning` | `1c77fc0` |
+| PR #2 Animation & rendering | `feature/animation-rendering` | `178c793` |
+| PR #3 Creative planning | `feature/creative-planning` | `922e972` |
+| #5 Timecode fix (main) | `fix/ntsc-timecode` | `c8a80b2` |
 
-The three branches were merged into `feature/end-to-end-integration` (from `main` `ec16bac`) with
-ordinary merge commits. There were no conflicts.
+All four were merged into `feature/end-to-end-integration` (from `main` `ec16bac`) with ordinary
+merge commits. The first integration merge had no conflicts. Re-syncing on 2026-10-31 resolved
+`compose.ts` and `time.ts` in favour of their branches' versions.
 
 ![Graphics from the demo run, composited over the footage](images/integration-demo.jpg)
 
@@ -113,17 +115,21 @@ type- and range-checked. Paths are probed read-only, and only files PR #2 render
      the render cache. The E2E run reports "Rendered 1 graphic(s), reused 8 unchanged from the
      cache".
 
-## Fixes made to the engines on this branch
+## Fixes found by the end-to-end run, now in their own branches
 
-The end-to-end run found these. They are fixed here and should be ported to their PRs:
+The bugs were fixed in their own branches on 2026-10-31, and this branch merges those branches. It
+therefore carries the same commits, and merges cleanly whichever lands first.
 
-| Engine | Problem | Fix |
+| Where | Problem | Fix (commit) |
 | --- | --- | --- |
-| PR #2 `src/main/render/compose.ts` | At NTSC rates a graphic could start one frame late, or lose its last frame. Boundaries were exact frame times written with 6 decimals, which can round past their own frame: frame 484 at 29.97 is 16.149466…s, written as 16.149467. | Boundaries sit half a frame before their frame, and the end is computed from the clip's frame count. A unit test sweeps 200 clips × 6 rates. |
-| PR #3 `src/shared/planning/adapter.ts` | Caption cues and words could end past the segment after rounding to 0.01 s, so PR #2 rejected the spec (`INVALID_SPEC`). | Clamp after rounding (regression test). |
-| PR #3 `src/shared/planning/adapter.ts` | Caption highlight used the first brand colour even when near-black, which is invisible on footage. | The highlight uses the first brand colour readable on dark (≥ 4.5:1), else `#ffd166`. |
-| PR #3 adapter | No graphics-only deliverable. | `alpha` option: full-frame graphics get a transparent background. |
-| main `src/renderer/lib/time.ts` | Timecode display counted 29.97 as 30 fps, drifting 3.6 s per hour. | Frames are counted at the exact rational, with a non-drop label. Parsing is inverted the same way. |
+| PR #2 `src/main/render/compose.ts` | At NTSC rates a graphic could appear one frame late and lose its last frame. Boundaries were seconds written with 6 decimals, which can round past their own frame (1.064 s at 24000/1001 snaps to frame 26 = 1.0844166…s). | `fcb68d4`: clips are stamped by frame number in the sequence's exact frame time base (`settb=den/num, setpts=N+first`). Real-FFmpeg tests at 24000/1001 and 30000/1001 check every frame. A first attempt on this branch (half-frame offsets) fixed the start but still dropped the last frame; it is replaced. |
+| PR #3 `src/shared/planning/adapter.ts` | Caption cues and words could end past the segment after rounding to 0.01 s, so PR #2 rejected the spec (`INVALID_SPEC`). | `922e972`: clamp after rounding (regression test). |
+| PR #3 `src/shared/planning/adapter.ts` | Caption highlight used the first brand colour even when near-black, which is invisible on footage. | `922e972`: the first brand colour readable on dark (≥ 4.5:1), else `#ffd166`. |
+| PR #3 tests | `tests/fixtures/planning/presets.json` was never committed (`.gitignore` ignores `presets.json`), so planning tests failed on a clean checkout. | `27b2389`: fixture added explicitly. |
+| main `src/renderer/lib/time.ts` | Timecode display counted 29.97 as 30 fps, drifting 3.6 s per hour. | [#5](https://github.com/tdk09671-spec/edissistant/pull/5) `c8a80b2`: frames counted at the exact rate, labelled as non-drop timecode. |
+
+Integration-only change, which stays in this branch: the PR #3 adapter's `alpha` option, which gives
+full-frame graphics a transparent background for graphics-only deliverables.
 
 Planning inputs are built by `toPlanningInputs`, not PR #3's `fromProjectSegments`. The latter
 treats an approved row's visual mode as an input, so writing the approved mode back to the row
