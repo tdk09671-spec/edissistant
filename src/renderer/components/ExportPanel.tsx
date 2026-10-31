@@ -1,9 +1,12 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { ExportFormat, ExportRecord, ExportSettings, Project, RenderTarget } from '../types';
+import { changesNotRendered } from '../lib/pipeline';
 import { resolutions } from '../lib/catalog';
 import { formatDateTime } from '../lib/time';
 import type { Pipeline } from '../pages/project/usePipeline';
 import { PipelineStatus } from './PipelineStatus';
-import { Badge, Button, Card, Notice } from './ui';
+import { Badge, Button, Card, Modal, Notice } from './ui';
 import { IconCheckCircle, IconFolder, IconInfo, IconPlay } from './ui/icons';
 
 export const exportFormats: Array<{ value: ExportFormat; title: string; description: string; container: string; target: RenderTarget }> = [
@@ -40,9 +43,15 @@ function LastExport({ record }: { record: ExportRecord }) {
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-2 text-[13px] font-medium text-ink">
           <IconCheckCircle size={15} className="text-success" /> Verified export
+          {record.outdated && <Badge tone="warning">Outdated</Badge>}
         </span>
         <span className="text-[12px] text-ink-3">{formatDateTime(record.createdAt)}</span>
       </div>
+      {record.outdated && (
+        <p data-testid="last-export-outdated" className="text-[12.5px] leading-relaxed text-warning">
+          Exported before these changes were applied: {record.outdated}
+        </p>
+      )}
       <ul className="flex flex-col gap-1.5">
         {record.files.slice(0, 6).map((f) => (
           <li key={f.path} className="flex items-center justify-between gap-2 text-[12.5px]">
@@ -73,6 +82,13 @@ export function ExportPanel({ settings, project, pipeline }: { settings: ExportS
   const approvedGraphics = segments.filter((s) => s.status === 'approved' && s.plan?.renderable && s.plan.mode !== 'speaker' && s.plan.mode !== 'b-roll').length;
   const withTranscript = segments.filter((s) => s.transcript.trim()).length;
   const last = project.exports?.find((e) => e.target === format.target);
+  const navigate = useNavigate();
+  const [confirming, setConfirming] = useState(false);
+  // Round 3 (Task D): requested changes that the export can't contain are named before anything is
+  // written, not only afterwards. Captions don't depend on the visual plan, so they're exempt.
+  const pending = format.target === 'captions' ? null : changesNotRendered(project);
+  const start = () => void pipeline.exportOutput({ target: format.target, folder: settings.destination, fileName: settings.fileName.trim() });
+  const toReview = () => navigate(`/projects/${project.id}/review`);
 
   const blocker = !window.electronAPI
     ? 'Rendering needs the desktop app.'
@@ -123,6 +139,20 @@ export function ExportPanel({ settings, project, pipeline }: { settings: ExportS
           {blocker}
         </Notice>
       )}
+      {!pipeline.job && pending && (
+        <Notice
+          tone="signal"
+          icon={<IconInfo size={16} />}
+          title="Not every requested change is in this export"
+          action={
+            <Button size="sm" variant="secondary" onClick={toReview}>
+              Go to Review
+            </Button>
+          }
+        >
+          <span data-testid="export-pending-changes">{pending}</span>
+        </Notice>
+      )}
 
       <Button
         variant="primary"
@@ -130,10 +160,38 @@ export function ExportPanel({ settings, project, pipeline }: { settings: ExportS
         icon={<IconPlay size={16} />}
         disabled={Boolean(blocker) || Boolean(pipeline.job)}
         className="w-full"
-        onClick={() => void pipeline.exportOutput({ target: format.target, folder: settings.destination, fileName: settings.fileName.trim() })}
+        onClick={() => (pending ? setConfirming(true) : start())}
       >
         Start render
       </Button>
+      <Modal
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        title="Export without the pending changes?"
+        description="The export would show the graphics as they were before these changes. It is marked as outdated if you go ahead."
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+            <Button variant="secondary" onClick={toReview}>
+              Go to Review
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setConfirming(false);
+                start();
+              }}
+            >
+              Export anyway
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[13.5px] leading-relaxed text-ink-2">{pending}</p>
+      </Modal>
       {last && <LastExport record={last} />}
     </Card>
   );

@@ -376,9 +376,9 @@ export function usePipeline(
           if (problems.length) throw new PipelineFailure('EXPORT_INVALID', `${check.path}: ${problems.join(' ')}`);
           files.push(check);
         }
-        const record: ExportRecord = { id: uuid(), target, createdAt: new Date().toISOString(), folder, files };
-        update((current) => ({ ...current, exports: [record, ...(current.exports ?? [])].slice(0, 20) }));
         const left = target === 'captions' ? null : changesNotRendered(applyUpdates(project(), built.updates));
+        const record: ExportRecord = { id: uuid(), target, createdAt: new Date().toISOString(), folder, files, ...(left ? { outdated: left } : {}) };
+        update((current) => ({ ...current, exports: [record, ...(current.exports ?? [])].slice(0, 20) }));
         setNotice(
           left
             ? { title: 'Export complete, but not every change is in it', message: `${files.length} file(s) written and checked in ${folder}. ${left}`, tone: 'warning' }

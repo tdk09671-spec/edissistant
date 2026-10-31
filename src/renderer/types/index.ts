@@ -126,6 +126,8 @@ export interface ExportRecord {
   createdAt: string;
   folder: string;
   files: MediaCheck[];
+  /** Set when the editor exported anyway while requested changes weren't applied: what's missing. */
+  outdated?: string;
 }
 
 export interface Project {
