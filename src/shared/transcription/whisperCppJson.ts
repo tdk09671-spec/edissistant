@@ -35,6 +35,14 @@ export interface ParsedWhisperOutput {
   wordTiming: WordTiming;
   /** End of the last segment, seconds. */
   end: number;
+  /** Where word times came from: DTW alignment, whisper token times, or spread evenly over segments. */
+  timingSource: 'dtw' | 'tokens' | 'interpolated';
+  /**
+   * Indices of words whose start is a whisper segment boundary rather than a measured word onset.
+   * Without DTW, whisper.cpp pins a segment's first token to the segment start, which it usually
+   * places where the previous segment ended (before the pause), so these starts are often early.
+   */
+  anchoredStarts: number[];
 }
 
 export interface ParseWhisperOptions {
@@ -72,8 +80,10 @@ export function parseWhisperCppJson(raw: string, options: ParseWhisperOptions = 
   }
 
   const words: TranscriptWord[] = [];
+  const anchoredStarts: number[] = [];
   let anyTokenTiming = false;
   let allTokenTiming = true;
+  let allDtw = true;
   let end = 0;
 
   for (const segment of data.transcription) {
@@ -83,18 +93,31 @@ export function parseWhisperCppJson(raw: string, options: ParseWhisperOptions = 
     const text = (segment.text ?? '').trim();
     if (!text || ANNOTATION.test(text)) continue;
 
-    const segmentWords = wordsFromTokens(segment.tokens ?? [], segStart, segEnd, options.dtw === true);
-    if (segmentWords) {
+    const fromTokens = wordsFromTokens(segment.tokens ?? [], segStart, segEnd, options.dtw === true);
+    const first = words.length;
+    if (fromTokens) {
       anyTokenTiming = true;
-      words.push(...segmentWords);
+      if (!fromTokens.usedDtw) allDtw = false;
+      words.push(...fromTokens.words);
+      if (!fromTokens.usedDtw && fromTokens.words.length && Math.abs(fromTokens.words[0].start - roundTime(segStart)) < 0.0015) anchoredStarts.push(first);
     } else {
       allTokenTiming = false;
+      allDtw = false;
       words.push(...interpolateWords(tokenizeText(text), segStart, segEnd));
+      if (words.length > first) anchoredStarts.push(first);
     }
   }
 
   const language = data.result?.language || data.params?.language || 'unknown';
-  return { language, words, wordTiming: anyTokenTiming && allTokenTiming ? 'word' : 'interpolated', end: roundTime(end) };
+  const timed = anyTokenTiming && allTokenTiming;
+  return {
+    language,
+    words,
+    wordTiming: timed ? 'word' : 'interpolated',
+    end: roundTime(end),
+    timingSource: !timed ? 'interpolated' : allDtw && words.length > 0 ? 'dtw' : 'tokens',
+    anchoredStarts,
+  };
 }
 
 interface WordBuilder {
@@ -106,7 +129,7 @@ interface WordBuilder {
 }
 
 /** Assembles sub-word tokens into words. Returns null when the tokens carry no timing. */
-function wordsFromTokens(tokens: RawToken[], segStart: number, segEnd: number, useDtw: boolean): TranscriptWord[] | null {
+function wordsFromTokens(tokens: RawToken[], segStart: number, segEnd: number, useDtw: boolean): { words: TranscriptWord[]; usedDtw: boolean } | null {
   const timed = tokens.filter(
     (t) => typeof t.text === 'string' && !SPECIAL_TOKEN.test(t.text) && typeof t.offsets?.from === 'number' && typeof t.offsets?.to === 'number'
   );
@@ -147,7 +170,7 @@ function wordsFromTokens(tokens: RawToken[], segStart: number, segEnd: number, u
   const words = built.filter((w) => !ANNOTATION.test(w.text) && hasWordCharacter(w.text));
   const dtwUsable = useDtw && words.length > 0 && words.every((w) => w.dtw !== null);
 
-  return words.map((w, i) => {
+  const timedWords = words.map((w, i) => {
     let start = w.start;
     let end = w.end;
     if (dtwUsable) {
@@ -163,4 +186,5 @@ function wordsFromTokens(tokens: RawToken[], segStart: number, segEnd: number, u
     }
     return word;
   });
+  return { words: timedWords, usedDtw: dtwUsable };
 }

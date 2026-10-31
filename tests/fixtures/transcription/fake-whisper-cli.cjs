@@ -6,6 +6,11 @@
 //
 // Test-only flags (must come first): --fake-mode=<normal|gpu-fail|gpu-ok|slow|crash|no-output>
 //   --fake-output=<json fixture>  --fake-record=<file that receives the argv as JSON lines>
+//   --fake-help=<modern|legacy>: modern (default) behaves like whisper.cpp >= 1.8: --help lists
+//   -nfa, flash attention is on by default and -dtw without -nfa logs the real "disabling" warning
+//   and writes no DTW times. legacy has no -nfa: passing it prints "error: unknown argument", the
+//   usage text and exits 0 without output, as the real CLI does. lying lists -nfa in --help but
+//   rejects it like legacy (to test the retry).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -23,6 +28,26 @@ if (argv.includes('--version')) {
   process.stdout.write('whisper.cpp version: 0.0.0-fake\n');
   process.exit(0);
 }
+
+const helpMode = fake.help || 'modern';
+const modern = helpMode === 'modern';
+const listsNfa = helpMode !== 'legacy';
+const usage = () => {
+  const lines = ['usage: whisper-cli [options] file0 file1 ...', '  -h,        --help                 [default] show this help message and exit', '  -ojf,      --output-json-full     [false  ] include more information in the JSON file', '  -dtw MODEL --dtw MODEL            [       ] compute token-level timestamps', '  -fa,       --flash-attn           [' + (modern ? 'true   ' : 'false  ') + '] enable flash attention'];
+  if (listsNfa) lines.push('  -nfa,      --no-flash-attn        [false  ] disable flash attention');
+  process.stderr.write(lines.join('\n') + '\n');
+};
+if (argv.includes('--help') || argv.includes('-h')) {
+  usage();
+  process.exit(0);
+}
+if (!modern && argv.includes('-nfa')) {
+  process.stderr.write('error: unknown argument: -nfa\n');
+  usage();
+  process.exit(0);
+}
+const flashAttn = modern && !argv.includes('-nfa');
+const dtwRequested = argv.includes('-dtw');
 
 const opt = (name) => {
   const i = argv.indexOf(name);
@@ -50,6 +75,8 @@ if (wav.toString('ascii', 0, 4) !== 'RIFF' || channels !== 1 || rate !== 16000 |
   process.exit(4);
 }
 
+if (flashAttn && dtwRequested) process.stderr.write('whisper_init_with_params_no_state: dtw_token_timestamps is not supported with flash_attn - disabling\n');
+process.stderr.write(`whisper_init_with_params_no_state: flash attn = ${flashAttn ? 1 : 0}\n`);
 process.stderr.write(`whisper_init_with_params_no_state: use gpu    = ${noGpu ? 0 : 1}\n`);
 if (!noGpu) {
   if (mode === 'gpu-fail') {
@@ -75,7 +102,10 @@ const tick = () => {
 const finish = () => {
   if (mode !== 'no-output') {
     const source = fake.output || path.join(__dirname, 'whisper-full.json');
-    fs.copyFileSync(source, `${outBase}.json`);
+    let json = fs.readFileSync(source, 'utf8');
+    // DTW switched off by flash attention: whisper.cpp writes t_dtw = -1 for every token.
+    if (flashAttn && dtwRequested) json = json.replace(/"t_dtw":\s*-?\d+(\.\d+)?/g, '"t_dtw": -1');
+    fs.writeFileSync(`${outBase}.json`, json);
   }
   process.stdout.write('[00:00:00.000 --> 00:00:01.800]   Welcome back to the edit.\n');
 };

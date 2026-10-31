@@ -69,10 +69,21 @@ export interface Transcript {
   media: TranscriptMedia;
   engine: TranscriptEngineInfo;
   wordTiming: WordTiming;
+  /** How word and sentence times were produced (absent in transcripts made before 2026-10-31). */
+  timing?: TranscriptTiming;
   sentences: TranscriptSentence[];
   createdAt: string;
   /** Non-fatal issues worth showing to the editor (e.g. GPU fallback). */
   warnings: string[];
+}
+
+export interface TranscriptTiming {
+  /** DTW alignment, whisper token times, or times spread evenly over the engine's segments. */
+  source: 'dtw' | 'tokens' | 'interpolated';
+  /** Sentence starts the engine pinned to a segment boundary that were moved to the speech onset in the audio. */
+  refinedStarts: number;
+  /** Such starts with no clear onset in the audio, left as the engine gave them (may be early). */
+  uncheckedStarts: number;
 }
 
 export interface SentenceGroupingOptions {
