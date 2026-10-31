@@ -8,6 +8,7 @@ import { comparisonSides } from './content';
 import { conceptById } from './concepts';
 import { ANIMATION_SPEC_VERSION_COMPAT, PR2_ID, type AnimationSpecCompat, type BackgroundCompat, type EasingCompat, type LayerCompat, type SequenceSpecCompat, type TransitionCompat, type TypographyCompat } from './compat';
 import { hash53 } from './hash';
+import { contrastRatio } from './styleProfile';
 import { avoidedBy } from './variety';
 import type { EffectiveSegment, FontStyle, PlanningSegmentInput, ProjectPlan, StyleProfile } from './types';
 
@@ -123,8 +124,9 @@ export function captionCues(seg: EffectiveSegment, D: number): { start: number; 
     const flush = (endAt: number) => {
       if (!group.length) return;
       const start = r2(group[0].start);
-      const end = r2(Math.max(start + 0.05, Math.min(D, endAt)));
-      cues.push({ start, end, text: group.map((w) => w.text).join(' '), words: group.map((w) => ({ text: w.text, start: r2(Math.max(start, w.start)), end: r2(Math.min(end, Math.max(w.start, w.end))) })).filter((w) => w.start < end) });
+      // Rounding to 0.01 s can push a cue past the segment (D = 4.165 → 4.17): clamp after rounding.
+      const end = Math.min(D, r2(Math.max(start + 0.05, Math.min(D, endAt))));
+      cues.push({ start, end, text: group.map((w) => w.text).join(' '), words: group.map((w) => ({ text: w.text, start: r2(Math.max(start, w.start)), end: Math.min(end, r2(Math.max(w.start, w.end))) })).filter((w) => w.start < end) });
       group = [];
     };
     for (const w of words) {
@@ -150,7 +152,7 @@ export function captionCues(seg: EffectiveSegment, D: number): { start: number; 
   return chunks.map((c) => {
     const start = r2(t);
     t += (D * c.length) / total;
-    return { start, end: r2(Math.min(D, t)), text: c };
+    return { start, end: Math.min(D, r2(t)), text: c };
   });
 }
 
@@ -403,6 +405,9 @@ const BUILDERS: Record<string, (c: Ctx) => Built> = {
   },
   'caption-emphasis': (c) => {
     const cues = captionCues(c.seg, c.D);
+    // Captions sit on the footage with a black stroke, so the highlight must read on dark: a
+    // near-black brand colour (often listed first) would make highlighted words disappear.
+    const onDark = [c.seg.params.accent, ...c.profile.palette.value.accents].find((a) => a && contrastRatio(a, '#000000') >= 4.5) ?? '#ffd166';
     if (!cues.length) return { missing: 'No caption text.', kind: 'missing-data' };
     const words = cues.some((q) => q.words?.length);
     return {
@@ -410,7 +415,7 @@ const BUILDERS: Record<string, (c: Ctx) => Built> = {
       background: { type: 'transparent' },
       layers: [
         { id: 'captions', type: 'captions',
-          props: { cues, style: { typography: { ...c.headline, fontSize: Math.round(c.H * 0.055 * c.scale) }, color: '#ffffff', highlightColor: c.accent, position: { x: 0.5, y: 0.84 }, maxWidth: 0.8, maxLines: 2,
+          props: { cues, style: { typography: { ...c.headline, fontSize: Math.round(c.H * 0.055 * c.scale) }, color: '#ffffff', highlightColor: onDark, position: { x: 0.5, y: 0.84 }, maxWidth: 0.8, maxLines: 2,
             stroke: { color: '#000000', width: Math.max(2, Math.round(c.H * 0.005)) }, shadow: { color: 'rgba(0, 0, 0, 0.5)', blur: 8, offsetY: 3 } },
             animation: { in: c.profile.motion.value.energy === 'energetic' ? 'pop' : 'fade', out: 'fade', highlightWords: words } } },
       ],
