@@ -75,7 +75,7 @@ export function speechThreshold(env: Float32Array): number {
 export function softThreshold(env: Float32Array): number {
   if (env.length === 0) return 1;
   const { noise, peak } = levels(env);
-  return Math.max(noise * 2.5, noise + (peak - noise) * 0.015, 0.0015);
+  return Math.max(noise * 2.5, noise + (peak - noise) * 0.01, 0.0015);
 }
 
 export interface OnsetResult {
@@ -122,7 +122,8 @@ export function refineAnchoredStarts(words: readonly TranscriptWord[], anchored:
         if (speech(f)) {
           // Back over a quiet lead-in consonant: at most 250 ms, not before the engine's start.
           const floor = Math.max(frameOf(w.start), f - Math.round(0.25 / frameSeconds));
-          while (f - 1 >= floor && env[f - 1] >= soft) f--;
+          // A single quieter frame inside the consonant doesn't end it.
+          while (f - 1 >= floor && (env[f - 1] >= soft || (f - 2 >= floor && env[f - 2] >= soft))) f--;
           onset = f * frameSeconds;
           break;
         }
