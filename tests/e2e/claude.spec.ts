@@ -3,7 +3,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Project } from '../../src/renderer/types';
-import { FIXTURE_VIDEO, close, freshAppData, go, launch, makeProject, readData, segment, userDataDir, writeData, type Launched } from './helpers';
+import { FIXTURE_VIDEO, close, freshAppData, go, launch, makePreset, makeProject, readData, segment, userDataDir, writeData, type Launched } from './helpers';
 import { GOOD_KEY, keyOf, MockAnthropic } from './mockAnthropic';
 
 // Claude (V1, bring your own key) through the real UI, the real Anthropic SDK and the real main
@@ -26,27 +26,72 @@ const ROWS = [
 
 const project = (dir: string) => (readData<Project[]>(dir, 'projects.json') ?? [])[0];
 
+// The client's own words (Windows round 5: these must reach Claude word for word when ticked).
+const BRIEF = 'Feels like a late-night radio show — warm, intimate, never shouty.\nUse the client’s "Quiet Hours" tagline once, near the end; 3 graphics max per minute!';
+const BRANDING = 'Navy #0B1F3A with a single amber accent. Never use drop shadows.';
+const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8ffff3f0005fe02fea7d6a4a00000000049454e44ae426082', 'hex');
+let lookPng: string;
+let brokenPng: string;
+
+/** The text blocks of the system prompt a recorded Messages request carried. */
+const systemText = (body: string) => (JSON.parse(body).system as { text: string }[]).map((b) => b.text).join('\n');
+
 async function settle(page: Page, timeout = 120_000) {
   await expect(page.getByTestId('pipeline-job')).toBeHidden({ timeout });
 }
 
-/** Every file under the app's data folder, as text (secrets.bin is encrypted and checked apart). */
-function dataFiles(root: string): { file: string; text: string }[] {
-  if (!fs.existsSync(root)) return [];
+// Secret-leak checks (Windows round 5). While the app runs, Chromium keeps some of its own files in
+// the data folder (caches, Local Storage, cookies) open and Windows locks them, so live checks read
+// only what Edissistant itself writes. After every test the app is closed and the WHOLE data folder,
+// Chromium's storage included, is scanned; a file that can't be read even then fails the test.
+
+/** Files Edissistant writes in its data folder (main.ts, planning, transcription, render caches). */
+const OWNED_TOP = /^(settings|projects|presets)\.json(\.bak|\.tmp)?$|^secrets\.bin$/;
+const OWNED_DIRS = ['planning', 'transcripts', 'renders'];
+const MAX_SCAN = 5 * 1024 * 1024; // rendered video in renders/ can't hold a key; skip big media
+
+function walk(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
   return fs
-    .readdirSync(root, { recursive: true, withFileTypes: true })
+    .readdirSync(dir, { recursive: true, withFileTypes: true })
     .filter((e) => e.isFile())
-    .map((e) => {
-      const file = path.join(e.parentPath, e.name);
-      return { file, text: fs.readFileSync(file).toString('latin1') };
-    });
+    .map((e) => path.join(e.parentPath, e.name));
 }
 
-function expectNoKeyAnywhere(data: string, logs: string[], page?: string) {
-  for (const { file, text } of dataFiles(data)) {
-    expect(text.includes(GOOD_KEY), `key found in ${file}`).toBe(false);
-    expect(text.includes(GOOD_KEY.slice(0, 24)), `part of the key found in ${file}`).toBe(false);
+function ownedFiles(root: string): string[] {
+  const top = fs.existsSync(root) ? fs.readdirSync(root).filter((f) => OWNED_TOP.test(f)).map((f) => path.join(root, f)) : [];
+  return [...top, ...OWNED_DIRS.flatMap((d) => walk(path.join(root, d)))];
+}
+
+/** Reads a file, waiting briefly for Windows to release a handle the closed app may still hold. */
+async function readSettled(file: string): Promise<Buffer> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return fs.readFileSync(file);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return Buffer.alloc(0); // removed while we listed (e.g. a journal file)
+      if (!['EBUSY', 'EPERM', 'EACCES'].includes(code ?? '') || attempt >= 40) {
+        throw new Error(`Couldn’t read ${file} for the secret scan after the app closed (${code}); the scan can’t be completed.`);
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
   }
+}
+
+async function expectNoKeyIn(files: string[]) {
+  for (const file of files) {
+    if ((fs.statSync(file, { throwIfNoEntry: false })?.size ?? 0) > MAX_SCAN) continue;
+    const text = (await readSettled(file)).toString('latin1');
+    const wide = Buffer.from(GOOD_KEY.slice(0, 24), 'utf16le').toString('latin1'); // UTF-16 stores (leveldb, SQLite)
+    expect(text.includes(GOOD_KEY.slice(0, 24)), `the key (or part of it) is in ${file}`).toBe(false);
+    expect(text.includes(wide), `the key (UTF-16) is in ${file}`).toBe(false);
+  }
+}
+
+/** While the app runs: Edissistant's own files, the logs and the page. */
+async function expectNoKeyAnywhere(data: string, logs: string[], page?: string) {
+  await expectNoKeyIn(ownedFiles(data));
   expect(logs.join('\n')).not.toContain(GOOD_KEY.slice(0, 24));
   if (page !== undefined) expect(page).not.toContain(GOOD_KEY.slice(0, 24));
 }
@@ -60,9 +105,10 @@ let logs: string[];
 
 async function start() {
   app = await launch(appData, { EDISSISTANT_ANTHROPIC_BASE_URL: mock.url });
-  logs = [];
+  // Main-process output and every renderer console message, kept across restarts.
   app.app.process().stdout?.on('data', (d) => logs.push(String(d)));
   app.app.process().stderr?.on('data', (d) => logs.push(String(d)));
+  app.page.on('console', (m) => logs.push(m.text()));
 }
 
 test.beforeEach(async ({}, testInfo) => {
@@ -70,12 +116,24 @@ test.beforeEach(async ({}, testInfo) => {
   await mock.start();
   appData = freshAppData(testInfo);
   data = userDataDir(appData);
+  logs = [];
   out = testInfo.outputPath('exports');
   fs.mkdirSync(out, { recursive: true });
+  const refs = testInfo.outputPath('refs');
+  fs.mkdirSync(refs, { recursive: true });
+  lookPng = path.join(refs, 'look.png');
+  brokenPng = path.join(refs, 'broken.png');
+  fs.writeFileSync(lookPng, PNG);
+  fs.writeFileSync(brokenPng, 'not really a png');
+  writeData(data, 'presets.json', [
+    makePreset({ id: 'preset-claude', name: 'Quiet Hours', clientName: 'Quiet Hours FM', creativeBrief: BRIEF, brandingNotes: BRANDING, referenceFiles: [FIXTURE_VIDEO, lookPng, brokenPng] }),
+  ]);
   writeData(data, 'projects.json', [
     makeProject({
       id: 'p1',
       name: 'Claude trailer',
+      presetId: 'preset-claude',
+      presetName: 'Quiet Hours',
       source: { path: FIXTURE_VIDEO, name: 'sample.mp4' },
       segments: ROWS,
       exportSettings: { format: 'full-motion', resolution: '640x360', frameRate: '25', destination: out, fileName: 'claude', allowFontFallback: true },
@@ -87,6 +145,11 @@ test.afterEach(async () => {
   expect(app.errors).toEqual([]);
   await close(app);
   await mock.stop();
+  // The app is closed: nothing is locked now, so every file it left is scanned, Chromium's included.
+  const files = walk(data);
+  expect(files.some((f) => f.endsWith('projects.json'))).toBe(true); // the scan really looked
+  await expectNoKeyIn(files);
+  expect(logs.join('\n')).not.toContain(GOOD_KEY.slice(0, 24));
 });
 
 /** Stores the key and chooses Claude through the same IPC the Settings page uses. */
@@ -163,7 +226,7 @@ test('Settings: the key is saved, tested, replaced and removed, and never reache
   await expect.poll(() => readData<{ budget?: { hardLimit?: number }; monthlyLimit?: number }>(path.join(data, 'planning'), 'config.json')).toMatchObject({ budget: { hardLimit: 2.5 }, monthlyLimit: 10 });
   await expect(section).toContainText('not Anthropic billing caps');
 
-  expectNoKeyAnywhere(data, logs, await page.content());
+  await expectNoKeyAnywhere(data, logs, await page.content());
   // The encrypted file exists and doesn't hold the key in readable form.
   expect(fs.existsSync(path.join(data, 'secrets.bin'))).toBe(true);
 
@@ -185,17 +248,32 @@ test('Generate with Claude: consent first, Claude rows to review, approval, and 
   await expect(dialog).toContainText('Your source video and audio');
   await expect(dialog.getByTestId('claude-estimate')).toContainText('claude-opus-5-5');
   await expect(dialog.getByTestId('claude-estimate')).toContainText('1 to send');
+  await expect(dialog.getByTestId('claude-limits')).toContainText('Project limit: none');
+  await expect(dialog.getByTestId('claude-limits')).toContainText('Monthly limit: none');
+  // The editor's own words are offered word for word (ticked); images only when ticked; videos never.
+  await expect(dialog.getByLabel(/Creative brief, word for word/)).toBeChecked();
+  await expect(dialog.getByLabel(/Branding notes, word for word/)).toBeChecked();
+  await expect(dialog.getByLabel('Reference image look.png (adds roughly 1,600 input tokens)')).not.toBeChecked();
+  await expect(dialog).toContainText('and the 1 reference video(s) in the preset');
+  await expect(dialog.getByTestId('claude-style-summary')).toContainText('Client style profile');
+  await dialog.getByLabel(/Branding notes, word for word/).uncheck(); // the editor leaves one out
+  await expect(page.getByTestId('claude-confirm')).toBeEnabled();
   await page.getByTestId('claude-confirm').click();
   await settle(page);
 
   await expect(page.getByText('Claude suggested visuals for 3 segment(s)', { exact: true })).toBeVisible();
-  await expect(page.getByTestId('pipeline-notice')).toContainText('2,400 input / 900 output tokens');
+  const notice = page.getByTestId('pipeline-notice');
+  await expect(notice).toContainText('input 2,400 tokens');
+  await expect(notice).toContainText('output 900 tokens');
+  await expect(notice).toContainText('cost calculated from these counts');
   await expect(page.getByTestId('row-source-claude')).toHaveCount(3);
   expect(mock.messageRequests).toHaveLength(1);
   const sent = mock.messageRequests[0].body;
   expect(sent).toContain('Revenue grew from $2 million to $9 million.');
-  expect(sent).not.toContain(FIXTURE_VIDEO); // the source is never sent, not even its path
-  expect(sent).not.toContain('sample.mp4');
+  expect(systemText(sent)).toContain(BRIEF); // word for word: punctuation, quotes, line break
+  expect(sent).not.toContain('Never use drop shadows'); // unticked
+  for (const never of [FIXTURE_VIDEO, 'sample.mp4', 'look.png', 'broken.png', PNG.toString('base64')]) expect(sent).not.toContain(never);
+  expect(JSON.stringify(JSON.parse(sent).messages)).not.toContain('"type":"image"');
   expect(JSON.parse(sent)).toMatchObject({ model: 'claude-opus-5-5', output_config: { format: { type: 'json_schema' } } });
 
   // Rows are suggestions, never approved for the editor.
@@ -220,7 +298,9 @@ test('Generate with Claude: consent first, Claude rows to review, approval, and 
   // Usage: per project in the dialog and in Settings.
   await go(page, '#/settings');
   await expect(page.getByTestId('claude-usage')).toContainText('Claude trailer');
-  await expect(page.getByTestId('claude-usage')).toContainText('2,400 / 900');
+  await expect(page.getByTestId('claude-usage')).toContainText('Input tokens');
+  await expect(page.getByTestId('claude-usage').locator('tbody tr').first()).toContainText('2,400');
+  await expect(page.getByTestId('claude-usage').locator('tbody tr').first()).toContainText('900');
 
   // Reopen the app: the plan, the Claude marks and the approval are all there; nothing is sent.
   await close(app);
@@ -229,7 +309,7 @@ test('Generate with Claude: consent first, Claude rows to review, approval, and 
   await expect(app.page.getByTestId('row-source-claude')).toHaveCount(3);
   await expect.poll(() => project(data)?.segments?.find((s) => s.id === 'r1')?.status).toBe('approved');
   expect(mock.messageRequests).toHaveLength(1);
-  expectNoKeyAnywhere(data, logs, await app.page.content());
+  await expectNoKeyAnywhere(data, logs, await app.page.content());
 });
 
 test('a preview and an export of a Claude plan use the saved plan: no new request', async () => {
@@ -295,7 +375,7 @@ test('failures (bad key, no credit, rate limit, network, invalid answer) change 
   // A billed but invalid answer is still recorded in usage.
   const usage = await page.evaluate(() => window.electronAPI!.getAiUsage('p1'));
   expect(usage.ok && usage.result.history?.length).toBe(1);
-  expectNoKeyAnywhere(data, logs, await page.content());
+  await expectNoKeyAnywhere(data, logs, await page.content());
 });
 
 test('a run in progress can be cancelled; a project limit refuses a run before anything is sent', async () => {
@@ -319,4 +399,51 @@ test('a run in progress can be cancelled; a project limit refuses a run before a
   await expect(limited.getByTestId('claude-blocked')).toContainText('project’s limit of $0.00');
   await expect(page.getByTestId('claude-confirm')).toBeDisabled();
   expect(mock.messageRequests).toHaveLength(1);
+});
+
+test('warn-at, limit labels, an invalid reference image, and toasts kept clear of the dialog', async () => {
+  const { page } = app;
+  await enableClaude(page);
+  await page.evaluate(() => window.electronAPI!.setAiConfig({ softLimit: 0.01, hardLimit: 5, monthlyLimit: 10 }));
+  const dialog = await generate(page);
+  await expect(dialog.getByTestId('claude-limits')).toContainText('Project limit: $5.00');
+  await expect(dialog.getByTestId('claude-limits')).toContainText('Monthly limit: $10.00');
+  await expect(dialog.getByTestId('claude-soft-warning')).toContainText('past your warning amount of $0.01');
+
+  // While a dialog is open, toasts sit at the top, away from the Send button.
+  await expect.poll(() => page.evaluate(() => document.body.classList.contains('modal-open'))).toBe(true);
+  expect(await page.getByTestId('toasts').evaluate((el) => getComputedStyle(el).top)).toBe('24px');
+
+  // An invalid image: the error shows and the image choices stay, so it can be unticked again.
+  const broken = dialog.getByLabel('Reference image broken.png (adds roughly 1,600 input tokens)');
+  await broken.check();
+  await expect(dialog.getByTestId('claude-error')).toContainText("broken.png isn't a valid PNG image");
+  await expect(broken).toBeVisible();
+  await expect(dialog.getByLabel('Reference image look.png (adds roughly 1,600 input tokens)')).toBeVisible();
+  await expect(page.getByTestId('claude-confirm')).toBeDisabled();
+  await broken.uncheck();
+  await expect(dialog.getByTestId('claude-error')).toHaveCount(0);
+  await expect(dialog.getByTestId('claude-estimate')).toBeVisible();
+  expect(mock.messageRequests).toHaveLength(0);
+
+  await page.getByTestId('claude-confirm').click();
+  await settle(page);
+  await expect(page.getByTestId('pipeline-notice')).toHaveAttribute('data-tone', 'warning');
+  await expect(page.getByTestId('pipeline-notice')).toContainText('has passed your warning amount of $0.01');
+  await expect.poll(() => page.evaluate(() => document.body.classList.contains('modal-open'))).toBe(false);
+  expect(await page.getByTestId('toasts').evaluate((el) => getComputedStyle(el).bottom)).toBe('24px');
+  expect(mock.messageRequests).toHaveLength(1);
+});
+
+test('the secret scan itself catches a planted key (owned files and Chromium storage, UTF-8 and UTF-16)', async ({}, testInfo) => {
+  const dir = testInfo.outputPath('planted');
+  fs.mkdirSync(path.join(dir, 'Local Storage', 'leveldb'), { recursive: true });
+  const owned = path.join(dir, 'settings.json');
+  const chromium = path.join(dir, 'Local Storage', 'leveldb', '000003.log');
+  fs.writeFileSync(owned, JSON.stringify({ note: `oops ${GOOD_KEY}` }));
+  fs.writeFileSync(chromium, Buffer.concat([Buffer.from([0, 1, 2]), Buffer.from(GOOD_KEY, 'utf16le')]));
+  await expect(expectNoKeyIn([owned])).rejects.toThrow(/settings\.json/);
+  await expect(expectNoKeyIn([chromium])).rejects.toThrow(/000003\.log/);
+  expect(ownedFiles(dir)).toEqual([owned]); // Chromium files are left to the after-close scan
+  expect(walk(dir).sort()).toEqual([chromium, owned].sort());
 });
