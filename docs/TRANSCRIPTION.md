@@ -159,12 +159,27 @@ default model, and plain-language `problems`) without running anything.
 
 - **The problem.** Without DTW, whisper.cpp pins the first token of each segment to the segment's start timestamp. Whisper usually puts that where the previous segment ended, before the pause, so a sentence could start most of a second before its first word. On Windows that put graphics up to ~0.9 s ahead of the speech.
 - **Which starts are affected.** The parser marks those starts (`anchoredStarts`): the first word of a segment whose time equals the segment start, or every segment's first word when there is no token timing. DTW times are measured onsets and are never marked.
-- **The fix.** The service moves each marked start to the speech onset it measures in the 16 kHz WAV that whisper read. It uses 10 ms RMS frames, with a threshold well above the noise floor. It then extends back over a quiet lead-in consonant ("f", "s") using a lower threshold, at most 250 ms. When a segment's word times are estimates, the segment's words are spread again from the measured onset.
-  - The new start stays inside that word, keeps at least 50 ms of it, and never goes before the previous word.
-  - A start already in speech is walked back to where that speech began, at most 0.5 s.
-  - No fixed offset is applied. Measured words and every word end are untouched.
-- **Starts that can't be checked.** A start with no clear onset is left as the engine gave it, and counted. The transcript then warns "N sentence start(s) couldn't be checked against the audio and may be early".
-- **What the transcript records.** `transcript.timing = { source: 'dtw' | 'tokens' | 'interpolated', refinedStarts, uncheckedStarts }` says how the times were produced.
+- **The fix** (timing version 3, after Windows validation round 2). The service moves each marked start to the speech onset it measures in the 16 kHz WAV that whisper read.
+  - **Evidence is speech, not volume.** The service measures the speech band (300–3400 Hz) in 10 ms frames, against the local background: the quietest 100 ms around the start, from 1 s before it. A music bed or steady noise is background, so speech starting over it is still found, and the bed alone never counts as speech already in progress. That was the bug that left the first sentence 0.92 s early with no warning.
+  - **An onset has to look like speech.** The band has to rise at least +6 dB over the background, rise out of quieter frames, and stay up for 150 ms of the next 400 ms. A kick drum or a lip smack doesn't qualify.
+  - **Quiet lead-in consonants** (f, s, sh, th, h) are found in a 2.5–7 kHz band, up to 250 ms before the vowel.
+  - **The search runs up to 3 s into the segment**, not just to whisper's first-token end, which often comes before the real onset. That miss caused up to 0.92 s early on clean speech and 2.03 s after a pause. Words that would end before the new start are spread again from it.
+  - No start moves before the previous word. No fixed offset is applied. Measured (DTW) word times and every word end are untouched.
+- **Every marked start ends in exactly one state**, counted in `transcript.timing`:
+  - `refinedStarts`: moved to a clear onset.
+  - `confirmedStarts`: the audio confirms the engine's time.
+  - `uncertainStarts`: weak or ambiguous evidence: music or noise under the speech (accurate to about ±0.1 s), an overlapping voice, or speech that runs on from the previous word. The start is the best guess.
+  - `uncheckedStarts`: no onset found; left as the engine gave it.
+  - Uncertain and unchecked starts are flagged on the word (`startUncertain`), and the transcript warns: "N sentence start(s) couldn't be verified against the audio …". The app never presents those as precisely synchronised.
+- **Measured** on synthetic speech and on real flite TTS, with truth taken from the dry stems (`tests/unit/transcription/onsetScenes.test.ts`):
+  - Clean speech, with pauses up to 2.5 s and lead-ins down to −30 dB: within 10 ms (synthetic) and 26 ms (TTS).
+  - With a music bed at −12 or −6 dB, every start is within 50 ms or flagged.
+  - An overlapping voice is always flagged.
+- **Missing speech** (Windows validation round 2: whisper.cpp 1.9.5, small.en with `-nfa`, dropped the last 8 s of a 40 s clip with no warning; base.en was fine). After every run the service looks for speech in the audio that no word covers: the speech band at least +8 dB over the file's floor, at least 1 s of it.
+  - A **DTW run** that left speech without text is redone without DTW. If that covers more, it is used, with a warning naming the model and the spans, and `timing.dtwFallback = { reason: 'truncated', dtwEnd }`.
+  - Speech that still has no text is **transcribed again** from a clip of just that audio, up to 5 spans and without DTW, and the words are added (`coverage.recovered`, with a warning).
+  - Anything still missing is listed in `coverage.gaps`, with `coverage.complete = false` and a warning. A transcript is never accepted silently with dialogue missing.
+  - DTW stays opt-in: it is used only when a request asks for it.
 - **Best accuracy.** Use DTW (`dtwAlignment`). On whisper.cpp 1.8 or newer, the app adds `-nfa` so DTW isn't switched off.
 
 ### Editing sentences

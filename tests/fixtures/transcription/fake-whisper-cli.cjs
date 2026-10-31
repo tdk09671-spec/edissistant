@@ -11,6 +11,15 @@
 //   and writes no DTW times. legacy has no -nfa: passing it prints "error: unknown argument", the
 //   usage text and exits 0 without output, as the real CLI does. lying lists -nfa in --help but
 //   rejects it like legacy (to test the retry).
+//   --fake-mode=bursts: instead of a canned file, "recognises" the audio it is given: each burst of
+//   sound is a sentence, split into ~0.4 s words. Segments start where the previous one ended (like
+//   whisper.cpp without DTW); with DTW on, tokens carry the true word onsets in t_dtw. Works on any
+//   clip, so a second pass over part of the audio gets times relative to that part.
+//   --fake-truncate-nfa=<model substring>:<seconds>: with -nfa and a model whose file name contains
+//   the substring, drop every segment starting after <seconds> (whisper.cpp 1.9.5 small.en with
+//   flash attention off stopped 8 s early in Windows validation round 2).
+//   --fake-truncate=<seconds>: drop segments after <seconds> whatever the flags (bursts mode).
+//   --fake-silent-under=<seconds>: inputs shorter than this produce no text (a failed second pass).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -99,7 +108,78 @@ const tick = () => {
   progress += 10;
   setTimeout(tick, step);
 };
+// Burst "recognition" for --fake-mode=bursts (see the header).
+function burstTranscript() {
+  // Samples start after the "data" chunk header (FFmpeg writes a LIST chunk before it).
+  let pos = 12;
+  while (pos + 8 <= wav.length && wav.toString('ascii', pos, pos + 4) !== 'data') pos += 8 + wav.readUInt32LE(pos + 4) + (wav.readUInt32LE(pos + 4) % 2);
+  const data = wav.subarray(pos + 8);
+  const n = Math.floor(data.length / 2);
+  const frame = 160; // 10 ms at 16 kHz
+  const env = [];
+  for (let f = 0; f * frame < n; f++) {
+    let sum = 0;
+    const end = Math.min(n, (f + 1) * frame);
+    for (let i = f * frame; i < end; i++) {
+      const v = data.readInt16LE(i * 2);
+      sum += v * v;
+    }
+    env.push(Math.sqrt(sum / Math.max(1, end - f * frame)));
+  }
+  const loud = env.map((e) => e > 600);
+  const sentences = [];
+  let open = null;
+  let quiet = 0;
+  loud.forEach((on, f) => {
+    if (on) {
+      if (!open) open = { a: f, b: f + 1 };
+      open.b = f + 1;
+      quiet = 0;
+    } else if (open && ++quiet > 40) {
+      sentences.push(open);
+      open = null;
+    }
+  });
+  if (open) sentences.push(open);
+  const seconds = n / 16000;
+  const truncateNfa = fake['truncate-nfa'] ? fake['truncate-nfa'].split(':') : null;
+  let cutoff = fake.truncate ? Number(fake.truncate) : Infinity;
+  if (truncateNfa && argv.includes('-nfa') && path.basename(model).includes(truncateNfa[0])) cutoff = Math.min(cutoff, Number(truncateNfa[1]));
+  if (fake['silent-under'] && seconds < Number(fake['silent-under'])) cutoff = -1;
+  const useDtw = dtwRequested && !flashAttn;
+  const ms = (s) => Math.round(s * 1000);
+  const transcription = [];
+  let prevEnd = 0;
+  let k = 0;
+  for (const s of sentences) {
+    const a = s.a / 100;
+    const b = s.b / 100;
+    if (a > cutoff) break;
+    const count = Math.max(1, Math.round((b - a) / 0.4));
+    const segFrom = transcription.length ? prevEnd : Math.floor(a);
+    const segTo = Math.min(seconds, b + 0.1);
+    const tokens = [{ text: '[_BEG_]', offsets: { from: ms(segFrom), to: ms(segFrom) }, p: 0.99, t_dtw: -1 }];
+    const words = [];
+    for (let i = 0; i < count; i++) {
+      const text = ` word${++k}${i === count - 1 ? '.' : ''}`;
+      words.push(text.trim());
+      // Token offsets spread over the whole segment (early start); DTW gets the true onsets.
+      const from = segFrom + ((segTo - segFrom) * i) / count;
+      const to = segFrom + ((segTo - segFrom) * (i + 1)) / count;
+      tokens.push({ text, offsets: { from: ms(from), to: ms(to) }, p: 0.9, t_dtw: useDtw ? Math.round((a + ((b - a) * i) / count) * 100) : -1 });
+    }
+    transcription.push({ offsets: { from: ms(segFrom), to: ms(segTo) }, text: ' ' + words.join(' '), tokens });
+    prevEnd = segTo;
+  }
+  return JSON.stringify({ result: { language: 'en' }, transcription });
+}
+
 const finish = () => {
+  if (mode === 'bursts') {
+    fs.writeFileSync(`${outBase}.json`, burstTranscript());
+    process.stdout.write('[bursts]\n');
+    return;
+  }
   if (mode !== 'no-output') {
     const source = fake.output || path.join(__dirname, 'whisper-full.json');
     let json = fs.readFileSync(source, 'utf8');

@@ -2,7 +2,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { energyEnvelope, readWav16, refineAnchoredStarts, speechThreshold } from '../../../src/main/transcription/onsets';
+import { analyzeSpeech, energyEnvelope, readWav16, refineAnchoredStarts, speechThreshold } from '../../../src/main/transcription/onsets';
 import { TIMING_VERSION, TranscriptionService } from '../../../src/main/transcription/service';
 import { WhisperCppEngine } from '../../../src/main/transcription/whisperCpp';
 import { parseWhisperCppJson } from '../../../src/shared/transcription';
@@ -33,7 +33,7 @@ const at = (...indices: number[]) => indices.map((index) => ({ index, count: 2, 
 describe('speech onsets for anchored sentence starts', () => {
   // Speech at 1.237–2.1, 2.48–3.3 (a 0.38 s pause), 4.905–6.0. Engine starts: early whole seconds
   // (1.0), the previous segment's end (2.1) and slightly late (5.0).
-  const env = energyEnvelope(signal(8, [[1.237, 2.1], [2.48, 3.3], [4.905, 6.0]]), RATE);
+  const env = analyzeSpeech(signal(8, [[1.237, 2.1], [2.48, 3.3], [4.905, 6.0]]), RATE);
   const engine = words([
     ['This', 1.0, 1.5],
     ['works.', 1.5, 2.1],
@@ -61,14 +61,14 @@ describe('speech onsets for anchored sentence starts', () => {
     expect(engine[0].start).toBe(1.0); // input not mutated
   });
 
-  it('leaves a start with no speech in its span alone and counts it as unchecked', () => {
+  it('leaves a start with no speech in its span alone, counts it as unchecked and flags it', () => {
     const r = refineAnchoredStarts(engine, [{ index: 6, count: 1, estimated: false }], env);
-    expect(r.words[6]).toEqual(engine[6]);
+    expect(r.words[6]).toEqual({ ...engine[6], startUncertain: true });
     expect(r).toMatchObject({ refined: 0, unchecked: 1 });
   });
 
   it('adjacent sentences with no pause: a start already in speech stays after the previous word', () => {
-    const joined = energyEnvelope(signal(4, [[0.5, 3.5]]), RATE);
+    const joined = analyzeSpeech(signal(4, [[0.5, 3.5]]), RATE);
     const w = words([
       ['One', 0.5, 1.2],
       ['two.', 1.2, 1.8],
@@ -82,25 +82,25 @@ describe('speech onsets for anchored sentence starts', () => {
     // 80 ms of a quiet "f" (about -30 dB below the vowel) from 3.120 s, then the vowel from 3.200 s.
     const samples = signal(5, [[3.2, 4.0]]);
     for (let i = Math.round(3.12 * RATE); i < Math.round(3.2 * RATE); i++) samples[i] += Math.round(300 * Math.sin(i * 1.7) + 150 * Math.sin(i * 2.9));
-    const r = refineAnchoredStarts(words([['First', 2.8, 3.6]]), [{ index: 0, count: 1, estimated: false }], energyEnvelope(samples, RATE));
+    const r = refineAnchoredStarts(words([['First', 2.8, 3.6]]), [{ index: 0, count: 1, estimated: false }], analyzeSpeech(samples, RATE));
     expect(Math.abs(r.words[0].start - 3.12)).toBeLessThanOrEqual(0.01);
     // A one-frame dip inside the consonant (seen in real speech) doesn't stop it.
     for (let i = Math.round(3.15 * RATE); i < Math.round(3.16 * RATE); i++) samples[i] = 0;
-    const dip = refineAnchoredStarts(words([['First', 2.8, 3.6]]), [{ index: 0, count: 1, estimated: false }], energyEnvelope(samples, RATE));
+    const dip = refineAnchoredStarts(words([['First', 2.8, 3.6]]), [{ index: 0, count: 1, estimated: false }], analyzeSpeech(samples, RATE));
     expect(Math.abs(dip.words[0].start - 3.12)).toBeLessThanOrEqual(0.01);
   });
 
   it('keeps at least 50 ms of the word and handles silence-only audio', () => {
-    const late = energyEnvelope(signal(3, [[1.48, 2.5]]), RATE);
+    const late = analyzeSpeech(signal(3, [[1.48, 2.5]]), RATE);
     const r = refineAnchoredStarts(words([['Hi', 1.0, 1.5]]), [{ index: 0, count: 1, estimated: false }], late);
     expect(r.words[0].start).toBeLessThanOrEqual(1.45);
     expect(speechThreshold(energyEnvelope(signal(2, []), RATE))).toBeGreaterThan(0);
-    expect(refineAnchoredStarts(words([['Hi', 0.5, 1]]), [{ index: 0, count: 1, estimated: false }], energyEnvelope(signal(2, []), RATE))).toMatchObject({ refined: 0, unchecked: 1 });
+    expect(refineAnchoredStarts(words([['Hi', 0.5, 1]]), [{ index: 0, count: 1, estimated: false }], analyzeSpeech(signal(2, []), RATE))).toMatchObject({ refined: 0, unchecked: 1 });
   });
 
   it('estimated word times (no token timing): searches the whole segment and spreads its words from the onset', () => {
     // Segment 11.165–13.23 s, speech from 11.338 s. Spread evenly, "So" ends at ~11.33 s, before the speech.
-    const env2 = energyEnvelope(signal(14, [[11.338, 13.0]]), RATE);
+    const env2 = analyzeSpeech(signal(14, [[11.338, 13.0]]), RATE);
     const texts = ['So', 'we', 'asked', 'one', 'question.'];
     const spread = texts.map((text, i, all) => {
       const w = all.map((t) => t.length);
@@ -217,7 +217,9 @@ describe.skipIf(!ffmpegPath || process.platform === 'win32')('end to end: real F
     // Ends and measured words are as the engine gave them.
     expect(transcript.sentences.map((s) => s.end)).toEqual([2.1, 3.3, 6]);
     expect(transcript.sentences[0].words[1]).toMatchObject({ text: 'works.', start: 1.5, end: 2.1 });
-    expect(transcript.timing).toEqual({ source: 'tokens', refinedStarts: 3, uncheckedStarts: 0 });
-    expect(TIMING_VERSION).toBe(2);
+    expect(transcript.timing).toEqual({ source: 'tokens', refinedStarts: 3, uncheckedStarts: 0, confirmedStarts: 0, uncertainStarts: 0 });
+    expect(transcript.coverage).toEqual({ complete: true, gaps: [], recovered: [] });
+    expect(transcript.sentences.every((s) => !s.words[0].startUncertain)).toBe(true);
+    expect(TIMING_VERSION).toBe(3);
   });
 });
