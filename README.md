@@ -2,7 +2,7 @@
 
 AI-powered production assistant for professional video editors — a Windows desktop app (Electron + React + TypeScript) for planning segments, directing cuts, reviewing with timestamped comments, and keeping each client's style consistent through reusable presets.
 
-> **Status: v0.1.0 development baseline.** This is a safe starting point for development, **not** a production or commercial release. On the `feature/end-to-end-integration` branch, the local transcription, creative planning and rendering engines are connected in the editor (transcribe → suggest visuals → approve → render preview → export); see [docs/INTEGRATION.md](docs/INTEGRATION.md). Planning is local and deterministic; Claude is not called. Packaging is not implemented. See [Test status](#test-status).
+> **Status: v0.1.0 development baseline.** This is a safe starting point for development, **not** a production or commercial release. On the `feature/end-to-end-integration` branch, the local transcription, creative planning and rendering engines are connected in the editor (transcribe → suggest visuals → approve → render preview → export); see [docs/INTEGRATION.md](docs/INTEGRATION.md). Planning is local and deterministic by default. Optional Claude planning with the editor's own Anthropic key is built on `feature/claude-planning`, and has been tested with mocked responses only ([docs/CLAUDE.md](docs/CLAUDE.md)). Packaging is not implemented. See [Test status](#test-status).
 
 ## Requirements
 
@@ -69,6 +69,7 @@ The app stores its data outside the repository, in Electron's `userData` folder:
 
 - [docs/INTEGRATION.md](docs/INTEGRATION.md): the end-to-end editing pipeline: how the engines connect, what works, local setup (whisper.cpp, FFmpeg, models, fonts), Windows checklist.
 - [docs/PLANNING.md](docs/PLANNING.md): creative planning engine: style profiles, variety, approvals, Claude provider, cost tracking.
+- [docs/CLAUDE.md](docs/CLAUDE.md): Claude planning in the editor (bring your own key): key storage, consent and cost, failures, tests, Windows checklist.
 - [docs/RENDERING.md](docs/RENDERING.md): animation spec, local rendering with FFmpeg, alpha formats, caching, Windows setup and test status.
 - [TESTING.md](TESTING.md): test commands, isolation, test log v2.
 - [ARCHITECTURE.md](ARCHITECTURE.md): process model, modules, Windows-specific handling, and areas suited to parallel development.
