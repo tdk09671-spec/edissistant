@@ -138,7 +138,7 @@ export interface TranscriptionOptions {
   audioTrack?: number;
   /**
    * Use whisper.cpp's DTW token alignment for more precise word timing. Needs a model whose
-   * architecture is known (tiny … large-v3-turbo). Default false.
+   * architecture is known (tiny … large-v3-turbo). Default: the `dtwAlignment` setting, else false.
    */
   dtwAlignment?: boolean;
   /** Skip the cache lookup and always re-transcribe (the result still replaces the cache entry). */
@@ -228,4 +228,9 @@ export interface TranscriptionSettings {
   model?: string;
   language?: string;
   device?: TranscriptionDevicePreference;
+  /**
+   * Default for `TranscriptionOptions.dtwAlignment` (the app's advanced "precise word timing"
+   * setting). Off unless set. A request's own option wins.
+   */
+  dtwAlignment?: boolean;
 }
