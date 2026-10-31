@@ -2,6 +2,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { segmentFrames } from '../../src/shared/animation/timeline';
 import type { Project } from '../../src/renderer/types';
 import { close, freshAppData, launch, makePreset, readData, userDataDir, writeData, type Launched } from './helpers';
 
@@ -229,7 +230,11 @@ test('transcribe → plan → approve → render → export → reopen → revis
     const mid = Math.round(((seg.start + seg.end) / 2) * fps);
     if (changed(frame(render.previewPath, at(mid)), frame(VIDEO, at(mid))) > 0.3) {
       // A full-frame graphic: on screen from its first frame through its last, footage on the next.
-      const last = first + Math.max(1, Math.round((Math.round((seg.end - seg.start) * 1000) / 1000) * fps)) - 1;
+      // The last frame is round(end·fps) − 1 on the shared grid (Windows round 2: it was computed as
+      // first + round(duration·fps) − 1, one frame off whenever the two roundings added up).
+      const span = segmentFrames(seg.start, Math.round((seg.end - seg.start) * 1000) / 1000, 29.97);
+      expect(span.first).toBe(first);
+      const last = span.end - 1;
       expect(changed(frame(render.previewPath, at(first)), frame(VIDEO, at(first)))).toBeGreaterThan(0.3);
       expect(changed(frame(render.previewPath, at(last)), frame(VIDEO, at(last))), `last frame ${last}`).toBeGreaterThan(0.3);
       expect(changed(frame(render.previewPath, at(last + 1)), frame(VIDEO, at(last + 1))), `frame after ${last}`).toBeLessThan(0.02);
