@@ -9,9 +9,9 @@ pipeline, and PR #3's local deterministic planner. It is not a UI simulation.
 
 | Engine | Branch | Commit integrated |
 | --- | --- | --- |
-| PR #1 Local transcription | `feature/local-transcription` | `143ea40` |
+| PR #1 Local transcription | `feature/local-transcription` | `ab032ef` |
 | PR #2 Animation & rendering | `feature/animation-rendering` | `178c793` |
-| PR #3 Creative planning | `feature/creative-planning` | `922e972` |
+| PR #3 Creative planning | `feature/creative-planning` | `3357fa7` |
 | #5 Timecode fix (main) | `fix/ntsc-timecode` | `c8a80b2` |
 
 All four were merged into `feature/end-to-end-integration` (from `main` `ec16bac`) with ordinary
@@ -128,6 +128,16 @@ therefore carries the same commits, and merges cleanly whichever lands first.
 | PR #3 tests | `tests/fixtures/planning/presets.json` was never committed (`.gitignore` ignores `presets.json`), so planning tests failed on a clean checkout. | `27b2389`: fixture added explicitly. |
 | main `src/renderer/lib/time.ts` | Timecode display counted 29.97 as 30 fps, drifting 3.6 s per hour. | [#5](https://github.com/tdk09671-spec/edissistant/pull/5) `c8a80b2`: frames counted at the exact rate, labelled as non-drop timecode. |
 
+**Found in real Windows testing of `6e35122` (2026-11), fixed in their own branches:**
+
+| Where | Problem | Fix (commits) |
+| --- | --- | --- |
+| PR #3 adapter + approvals | Picking a concept that doesn't fit the segment's mode (e.g. Kinetic headline on a Captions segment) produced a spec PR #2 rejects. Because a sequence is validated as a whole, no preview rendered. | `3357fa7`: picking a concept brings its own mode, and picking a mode brings its default concept (recorded in history). An explicit impossible pair is refused with the reason. Incompatible plans saved earlier are flagged `incompatible`. |
+| PR #4 pipeline | One invalid spec blocked every graphic. | `a780a84`: each spec is validated with PR #2's validator first; a failing one is reported `invalid` and left out, and the rest render (from cache). |
+| PR #1 whisperCpp | whisper.cpp ≥ 1.8 turns flash attention on by default, which silently disables DTW. | `dc483e8`: `-nfa` is added with `-dtw` only when `whisper-cli --help` lists it. An unknown flag is handled (exit 0, no output). DTW switched off is reported. |
+| PR #1 timing | Sentence starts on whisper's segment boundaries (whole seconds, before the pause), so graphics appeared up to ~0.9 s early. | `651a5f1`, `1f606d8`, `89e0e70`, `ab032ef`: starts pinned to a segment boundary are moved to the speech onset measured in the extracted audio, including quiet lead-in consonants. Estimated segments are spread again. The cache key is bumped. `transcript.timing` records how times were made. |
+| PR #4 UI | The missing-font error said "set allowFallback". | `a780a84`: "Install it, or go to Export → Allow a fallback font." |
+
 Integration-only change, which stays in this branch: the PR #3 adapter's `alpha` option, which gives
 full-frame graphics a transparent background for graphics-only deliverables.
 
@@ -241,10 +251,12 @@ Everything else is real:
 - FFmpeg encoding and composition
 - export copy and FFprobe verification
 
-**Linux results (2026-10-31):**
-- Typecheck and build pass.
-- Unit tests: 398 passed, 2 skipped.
-- E2E: 34/34 passed as a normal user. As root, PR #1's 4 `launcher.spec.ts` tests fail because Electron refuses root without `--no-sandbox` (details in [TESTING.md](../TESTING.md)).
+**Linux results (2026-11-01, from a clean clone of the pushed branch):**
+- `npm ci`, typecheck and build pass.
+- Unit tests: 429 passed, 2 skipped.
+- E2E: 34/34 passed as a normal user.
+- As root, PR #1's 4 `launcher.spec.ts` tests fail because Electron refuses root without `--no-sandbox` (details in [TESTING.md](../TESTING.md)).
+- Transcription in these tests uses the stand-in `whisper-cli`. Real whisper.cpp was not run here.
 
 ## Windows validation checklist (integrated app)
 
