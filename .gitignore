@@ -19,6 +19,7 @@ npm-debug.log*
 coverage/
 test-results/
 playwright-report/
+ci-reports/
 
 # Secrets and credentials — never commit
 .env
