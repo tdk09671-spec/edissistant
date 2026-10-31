@@ -9,15 +9,12 @@ import {
   Field,
   Input,
   LoadingState,
-  Notice,
   PageHeader,
   Select,
   SettingRow,
   Toggle,
-  Tooltip,
   UnavailableBadge,
   cn,
-  useToast,
 } from '../components/ui';
 import {
   IconBolt,
@@ -28,11 +25,11 @@ import {
   IconHardDrive,
   IconInfo,
   IconKey,
-  IconLock,
   IconMic,
   IconSliders,
 } from '../components/ui/icons';
-import type { AppInfo, AppSettings, SecretStatus } from '../types';
+import type { AppInfo, AppSettings } from '../types';
+import { ClaudeSettings } from '../components/ClaudeSettings';
 
 const sections = [
   { id: 'general', label: 'General', icon: IconSliders },
@@ -79,19 +76,13 @@ function CommitInput({ value, onCommit, ...props }: { value: string; onCommit: (
 
 export default function Settings() {
   const { settings, saveSettings, loading } = useData();
-  const toast = useToast();
   const api = window.electronAPI;
   const [info, setInfo] = useState<AppInfo | null>(null);
-  const [secrets, setSecrets] = useState<SecretStatus | null>(null);
-  const [apiKey, setApiKey] = useState('');
-  const [editingKey, setEditingKey] = useState(false);
-  const [savingKey, setSavingKey] = useState(false);
   const [activeSection, setActiveSection] = useState('general');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api?.getAppInfo().then(setInfo).catch(() => undefined);
-    api?.getSecretStatus().then(setSecrets).catch(() => undefined);
   }, [api]);
 
   // Highlight the section in view
@@ -115,28 +106,6 @@ export default function Settings() {
   const set = (patch: Partial<AppSettings>) => saveSettings((s) => ({ ...s, ...patch }));
   const setLocalAI = (patch: Partial<AppSettings['localAI']>) => saveSettings((s) => ({ ...s, localAI: { ...s.localAI, ...patch } }));
 
-  const storeKey = async () => {
-    if (!api || !apiKey.trim()) return;
-    setSavingKey(true);
-    try {
-      await api.setSecret('claudeApiKey', apiKey.trim());
-      setSecrets(await api.getSecretStatus());
-      setApiKey('');
-      setEditingKey(false);
-      toast('API key stored securely');
-    } catch (err) {
-      toast('Could not store API key', { tone: 'error', description: err instanceof Error ? err.message : String(err) });
-    }
-    setSavingKey(false);
-  };
-
-  const removeKey = async () => {
-    if (!api) return;
-    await api.deleteSecret('claudeApiKey');
-    setSecrets(await api.getSecretStatus());
-    toast('API key removed');
-  };
-
   const browseFolder = async (current: string, apply: (path: string) => void) => {
     const folder = await api?.openDirectory({ defaultPath: current || info?.videosPath });
     if (folder) apply(folder);
@@ -144,7 +113,6 @@ export default function Settings() {
 
   if (loading) return <LoadingState label="Loading settings…" />;
 
-  const keyLooksOdd = apiKey.trim().length > 0 && !apiKey.trim().startsWith('sk-ant-');
   const restartNeeded = info && info.hardwareAcceleration !== settings.hardwareAcceleration;
 
   return (
@@ -195,78 +163,9 @@ export default function Settings() {
             <Section
               id="claude"
               title="Claude API"
-              description="Used for AI planning and segment suggestions once they are integrated. Your key is encrypted with the operating system’s credential protection and is never written to a plain-text file."
-              badge={<UnavailableBadge>Planning not yet integrated</UnavailableBadge>}
+              description="Optional AI planning with your own Anthropic key (you pay Anthropic directly). Transcription and rendering always stay on this computer, and source video is never uploaded."
             >
-              <div className="flex flex-col gap-5 pb-5">
-                {!isElectron ? (
-                  <Notice icon={<IconLock size={16} />}>Secure key storage is only available in the desktop app.</Notice>
-                ) : secrets && !secrets.encryptionAvailable ? (
-                  <Notice tone="danger" icon={<IconLock size={16} />} title="Secure storage unavailable">
-                    This system doesn’t provide OS credential encryption, so Edissistant won’t store an API key rather than saving it in plain text.
-                  </Notice>
-                ) : secrets?.claudeApiKey && !editingKey ? (
-                  <div className="flex flex-wrap items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <span className="flex size-10 items-center justify-center rounded-[11px] bg-success/12 text-success">
-                        <IconLock size={18} />
-                      </span>
-                      <div>
-                        <p className="text-sm font-medium text-ink">API key stored securely</p>
-                        <p className="timecode text-[12.5px] text-ink-3">sk-ant-••••••••••••</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="secondary" onClick={() => setEditingKey(true)}>
-                        Replace
-                      </Button>
-                      <Button size="sm" variant="danger" onClick={removeKey}>
-                        Remove
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <form
-                    className="flex flex-col gap-3"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      storeKey();
-                    }}
-                  >
-                    <Field label="API key" htmlFor="s-apikey" hint={keyLooksOdd ? 'Anthropic keys usually start with sk-ant-. Double-check before saving.' : 'Find it in the Claude Console under API keys.'}>
-                      <div className="flex gap-2">
-                        <Input
-                          id="s-apikey"
-                          type="password"
-                          autoComplete="off"
-                          spellCheck={false}
-                          value={apiKey}
-                          onChange={(e) => setApiKey(e.target.value)}
-                          placeholder="sk-ant-…"
-                          className="timecode min-w-0 flex-1"
-                        />
-                        <Button type="submit" variant="primary" loading={savingKey} disabled={!apiKey.trim()}>
-                          Save key
-                        </Button>
-                        {editingKey && (
-                          <Button variant="ghost" onClick={() => setEditingKey(false)}>
-                            Cancel
-                          </Button>
-                        )}
-                      </div>
-                    </Field>
-                  </form>
-                )}
-              </div>
-              <SettingRow title="Connection test" description="Checks the key against the API. Arrives together with AI planning.">
-                <Tooltip content="Not available in this build">
-                  <span tabIndex={0}>
-                    <Button size="sm" variant="secondary" disabled>
-                      Test connection
-                    </Button>
-                  </span>
-                </Tooltip>
-              </SettingRow>
+              <ClaudeSettings />
             </Section>
 
             <Section

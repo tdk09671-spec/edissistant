@@ -182,6 +182,11 @@ PR #2 `AnimationSpec`s. `toSequenceSpec` collects them into a `SequenceSpec`.
 
 ## F. Claude provider
 
+> **In the editor** (Generate with Claude, see [CLAUDE.md](CLAUDE.md)), runs use a stricter policy
+> than the defaults below: one attempt (no automatic retry), no second attempt after an invalid
+> answer, and no silent switch to local suggestions. A failed run throws and changes nothing.
+> Validated answers are cached by request hash, so identical requests are never paid for twice.
+
 `ModelConceptProvider` (shared and transport-agnostic) plus `AnthropicTransport` (main process,
 `@anthropic-ai/sdk` ^1.3.0).
 
@@ -262,6 +267,7 @@ folder couldn't be migrated, it lives there instead.) Start from
 | `refusalFallback`, `fallbackToLocal` | Server-side refusal fallback; local suggestions when the model fails | both `true` |
 | `budget` | `softLimit`, `hardLimit`, `warnAt`, `targetPerVideo` for every project (USD estimates) | none |
 | `projectBudgets["<projectId>"]` | Replaces `budget` for one project | none |
+| `monthlyLimit` | USD across all projects per calendar month (UTC); calls that could pass it are refused | none |
 | `pricing` | A complete, versioned price table that replaces the built-in one | `DEFAULT_PRICING` |
 
 **Order of precedence:**
@@ -390,6 +396,9 @@ What changed in PR #2 since the first check (`343542c`), and what it means here:
 | After merge | Replace the PR #2 mirrors in `compat.ts` with type imports from `src/shared/animation/types`. |
 
 ### Wiring the service
+
+> Done on `feature/claude-planning`: see the IPC table in [CLAUDE.md](CLAUDE.md). The sketch
+> below is the original plan, kept for reference.
 
 Do this after both PRs are merged; it touches `main.ts` and `preload.ts`.
 

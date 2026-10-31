@@ -27,6 +27,8 @@ export interface PlanningConfig {
   budget?: Budget;
   /** Per-project limits; replace `budget` for that project. */
   projectBudgets?: Record<string, Budget>;
+  /** USD across all projects per calendar month (UTC). Calls that could pass it are refused. */
+  monthlyLimit?: number;
   /** Replaces the built-in price table (bump `version` when prices change). */
   pricing?: PricingTable;
 }
@@ -125,7 +127,7 @@ export function parsePlanningConfig(raw: unknown): ConfigParseResult {
     return { version: String(v.version ?? ''), currency: 'USD', source: typeof v.source === 'string' ? v.source : 'config.json', models };
   };
 
-  allowed(raw, ['schema', 'version', 'models', 'effort', 'maxSegmentsPerBatch', 'maxOutputTokens', 'timeoutMs', 'retry', 'refusalFallback', 'fallbackToLocal', 'budget', 'projectBudgets', 'pricing'], 'config');
+  allowed(raw, ['schema', 'version', 'models', 'effort', 'maxSegmentsPerBatch', 'maxOutputTokens', 'timeoutMs', 'retry', 'refusalFallback', 'fallbackToLocal', 'budget', 'projectBudgets', 'monthlyLimit', 'pricing'], 'config');
   if (raw.schema !== PLANNING_CONFIG_SCHEMA) issues.push(`config.schema must be "${PLANNING_CONFIG_SCHEMA}".`);
   if (raw.version !== PLANNING_CONFIG_VERSION) issues.push(`config.version must be ${PLANNING_CONFIG_VERSION}.`);
 
@@ -171,6 +173,8 @@ export function parsePlanningConfig(raw: unknown): ConfigParseResult {
       }
     }
   }
+  const monthly = num(raw.monthlyLimit, 'config.monthlyLimit', 0, 100_000);
+  if (monthly !== undefined) config.monthlyLimit = monthly;
   const p = pricing(raw.pricing, 'config.pricing');
   if (p) config.pricing = p;
 

@@ -228,23 +228,14 @@ node tests/fixtures/pipeline/make-trailer.cjs ~/edissistant-trailer
 This writes a 35.6 s, 29.97 fps trailer with synthesised speech. On Windows, use your own clip
 instead.
 
-## Claude: prepared, not called
+## Claude (bring your own key)
 
-- `pipeline:plan` accepts `useModel: true`. That routes candidate generation through PR #3's
-  `ModelConceptProvider` and `AnthropicTransport`.
-- The key is read from the encrypted secrets store per request.
-- Model, budget and price come from `%APPDATA%\edissistant\planning\config.json` (see
-  [PLANNING.md](PLANNING.md) section H).
-- **The UI never sends `useModel: true`.** Every plan in this branch is local and deterministic, and
-  no paid call was made.
+Claude planning is wired into the editor: **Settings → Claude API** (provider, encrypted key,
+connection test, model, limits, usage) and **Generate with Claude** / **Ask Claude** in the project.
+A dialog shows what would be sent and the estimated cost before anything leaves the computer.
+See [CLAUDE.md](CLAUDE.md) for the design, security, cost controls, tests and the Windows checklist.
 
-Still needs a real, approved API run (with a small hard limit in `config.json`):
-- That the API accepts the request as built: structured-output schema, effort, refusal-fallback beta.
-- Real prompt-cache hit rates, token use and cost per video.
-- Real rate-limit behaviour.
-- Whether model suggestions beat the local planner. No quality claim is made.
-- A UI control to opt into model planning, with the cost estimate shown first. It is not built yet,
-  on purpose.
+**Tested with mocked Anthropic responses only. No real API call has been made.**
 
 ## Tests
 

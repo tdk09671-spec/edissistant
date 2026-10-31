@@ -8,8 +8,9 @@ import { buildStyleProfile, type PresetLike } from '../../shared/planning/styleP
 import type { PlanResult } from '../../shared/planning/planner';
 import type { StyleProfile } from '../../shared/planning/types';
 import { buildSequence, presetWithNotes, segmentUpdates, toPlanningInputs } from '../../shared/pipeline/convert';
-import type { ActRequest, BuildRequest, BuildResponse, PlanOutcome, PlanRequest, ProjectPlanningInput } from '../../shared/pipeline/types';
-import { PlanningService, type PlanningServiceOptions } from '../planning';
+import { profileSummary, type PlanningReferences } from '../../shared/planning/modelProvider';
+import type { ActRequest, BuildRequest, BuildResponse, PlanEstimate, PlanOutcome, PlanRequest, ProjectPlanningInput, RunUsage } from '../../shared/pipeline/types';
+import { EDITOR_RUN_POLICY, PlanningService, type PlanningServiceOptions } from '../planning';
 
 export class PipelineError extends Error {
   constructor(
@@ -45,7 +46,7 @@ export class PipelineService {
     return profile;
   }
 
-  private outcome(result: PlanResult & { cost: { calls: number; estimatedCost: number; warnings: string[] } }, profile: StyleProfile): PlanOutcome {
+  private outcome(result: PlanResult & { cost: { calls: number; estimatedCost: number; warnings: string[] } }, profile: StyleProfile, run?: RunUsage): PlanOutcome {
     return {
       updates: segmentUpdates(result.plan),
       planned: result.planned,
@@ -55,23 +56,42 @@ export class PipelineService {
       findings: result.plan.findings,
       profile: { id: profile.id, revision: profile.revision, confidence: profile.confidence, uncertainties: profile.uncertainties },
       cost: { calls: result.cost.calls, estimatedCost: result.cost.estimatedCost, warnings: result.cost.warnings },
+      ...(run ? { run } : {}),
     };
   }
 
-  /** Plans new and changed rows; approved and edited rows are kept (see PR #3 replanning rules). */
-  async plan(request: PlanRequest, signal?: AbortSignal): Promise<PlanOutcome> {
+  private planningRequest(request: PlanRequest, profile: StyleProfile) {
+    return {
+      projectId: request.projectId,
+      profile,
+      segments: toPlanningInputs(request.segments),
+      variety: request.variety ?? 'balanced',
+      clientHistory: this.planning.store.clientHistory(request.preset.id),
+    };
+  }
+
+  /** What a Claude run for this request would send and cost. Local; nothing is sent. */
+  async estimate(request: PlanRequest, references?: PlanningReferences): Promise<PlanEstimate> {
     const profile = this.profile(request);
-    const result = await this.planning.plan(
-      {
-        projectId: request.projectId,
-        profile,
-        segments: toPlanningInputs(request.segments),
-        variety: request.variety ?? 'balanced',
-        clientHistory: this.planning.store.clientHistory(request.preset.id),
-      },
-      { useModel: request.useModel === true, allowReplan: request.allowReplan, signal }
-    );
-    return this.outcome(result, profile);
+    const e = await this.planning.estimate(this.planningRequest(request, profile), { allowReplan: request.allowReplan, references });
+    return { ...e, styleSummary: profileSummary(profile), budget: { ...(e.budget.softLimit !== undefined ? { softLimit: e.budget.softLimit } : {}), ...(e.budget.hardLimit !== undefined ? { hardLimit: e.budget.hardLimit } : {}) } };
+  }
+
+  /** Plans new and changed rows; approved and edited rows are kept (see PR #3 replanning rules). */
+  /**
+   * A Claude run (useModel) uses the editor policy: one attempt, no retries, no silent switch to
+   * local suggestions; a failure throws and leaves the plan as it was.
+   */
+  async plan(request: PlanRequest, opts: { signal?: AbortSignal; references?: PlanningReferences } = {}): Promise<PlanOutcome> {
+    const profile = this.profile(request);
+    const useModel = request.useModel === true;
+    const result = await this.planning.plan(this.planningRequest(request, profile), {
+      useModel,
+      allowReplan: request.allowReplan,
+      signal: opts.signal,
+      ...(useModel ? { policy: EDITOR_RUN_POLICY, references: opts.references } : {}),
+    });
+    return this.outcome(result, profile, useModel ? result.run : undefined);
   }
 
   /**

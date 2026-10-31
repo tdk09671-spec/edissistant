@@ -25,6 +25,8 @@ export interface AnthropicTransportOptions {
   refusalFallback?: boolean;
   /** For tests: build the client from a key. */
   createClient?: (apiKey: string) => MessagesClient;
+  /** API base URL override. Only ever set in test mode (a local mock server); never from user input. */
+  baseURL?: string;
 }
 
 function retryAfterMs(headers: Headers | undefined): number | undefined {
@@ -46,6 +48,10 @@ export function mapSdkError(error: unknown): PlanningError {
   if (error instanceof Anthropic.PermissionDeniedError) return new PlanningError('PERMISSION', 'This API key is not allowed to use the requested model.');
   if (error instanceof Anthropic.NotFoundError) return new PlanningError('NOT_FOUND', 'The requested model was not found.');
   if (error instanceof Anthropic.RateLimitError) return new PlanningError('RATE_LIMITED', 'Rate limited by the Anthropic API.', { retryAfterMs: retryAfterMs(error.headers) });
+  // Depleted credits: 402 billing_error, or (older behaviour) a 400 about the credit balance.
+  if ((error instanceof Anthropic.APIError && error.status === 402) || (error instanceof Anthropic.BadRequestError && /credit balance/i.test(error.message))) {
+    return new PlanningError('CREDITS', 'Your Anthropic account has no credit left for this request. Add credits in the Anthropic Console (Plans & Billing), then try again.', { retryable: false });
+  }
   if (error instanceof Anthropic.BadRequestError) return new PlanningError('BAD_REQUEST', `The API rejected the request: ${redactSecrets(error.message)}`);
   if (error instanceof Anthropic.InternalServerError) {
     return error.status === 529
@@ -59,11 +65,34 @@ export function mapSdkError(error: unknown): PlanningError {
   return new PlanningError('SERVER_ERROR', redactSecrets(error instanceof Error ? error.message : String(error)));
 }
 
+export type ConnectionTestResult =
+  | { ok: true; model: string; displayName?: string }
+  | { ok: false; code: PlanningError['code']; message: string };
+
+/**
+ * Checks a key and a model without spending tokens: GET /v1/models/{model} (the Models API is not
+ * billed). The key is used for this one request and never returned or logged.
+ */
+export async function testAnthropicConnection(options: { apiKey: string; model: string; baseURL?: string; timeoutMs?: number; createModelsClient?: (apiKey: string) => { models: { retrieve: (id: string, params?: unknown, opts?: { timeout?: number }) => Promise<{ id: string; display_name?: string }> } } }): Promise<ConnectionTestResult> {
+  const client = options.createModelsClient ? options.createModelsClient(options.apiKey) : new Anthropic({ apiKey: options.apiKey, maxRetries: 0, ...(options.baseURL ? { baseURL: options.baseURL } : {}) });
+  try {
+    const info = await client.models.retrieve(options.model, undefined, { timeout: options.timeoutMs ?? 15_000 });
+    return { ok: true, model: info.id, ...(info.display_name ? { displayName: info.display_name } : {}) };
+  } catch (error) {
+    const e = mapSdkError(error);
+    const message =
+      e.code === 'NOT_FOUND'
+        ? `The key works, but the model “${options.model}” isn’t available to it. Check the model name in Settings.`
+        : e.message;
+    return { ok: false, code: e.code, message: redactSecrets(message) };
+  }
+}
+
 export class AnthropicTransport implements ModelTransport {
   constructor(private readonly options: AnthropicTransportOptions) {}
 
   private client(apiKey: string): MessagesClient {
-    return this.options.createClient ? this.options.createClient(apiKey) : new Anthropic({ apiKey, maxRetries: 0 });
+    return this.options.createClient ? this.options.createClient(apiKey) : new Anthropic({ apiKey, maxRetries: 0, ...(this.options.baseURL ? { baseURL: this.options.baseURL } : {}) });
   }
 
   /** Builds the request body (exposed for tests and for token counting). */

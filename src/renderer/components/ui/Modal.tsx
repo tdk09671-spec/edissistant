@@ -6,6 +6,8 @@ import { IconClose } from './icons';
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+let openDialogs = 0;
+
 interface ModalProps {
   open: boolean;
   onClose: () => void;
@@ -22,6 +24,18 @@ export function Modal({ open, onClose, title, description, children, footer, siz
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+
+  // While any dialog is open, toasts move to the top of the window so they never cover its footer
+  // buttons (Windows round 5: a toast could hide the Claude dialog's Send button).
+  useEffect(() => {
+    if (!open) return;
+    openDialogs++;
+    document.body.classList.add('modal-open');
+    return () => {
+      openDialogs = Math.max(0, openDialogs - 1);
+      if (!openDialogs) document.body.classList.remove('modal-open');
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

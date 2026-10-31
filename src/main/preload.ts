@@ -63,6 +63,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   planAction: (request: unknown) => ipcRenderer.invoke('pipeline:act', request),
   buildSequence: (request: unknown) => ipcRenderer.invoke('pipeline:build', request),
   checkMedia: (mediaPath: string) => ipcRenderer.invoke('pipeline:checkMedia', mediaPath),
+  estimatePlan: (request: unknown) => ipcRenderer.invoke('pipeline:estimate', request),
+  cancelPlan: (jobId: string) => ipcRenderer.invoke('pipeline:cancel', jobId),
+
+  // Claude (Anthropic): settings and usage. The API key never comes back through these.
+  getAiStatus: () => ipcRenderer.invoke('ai:status'),
+  setAiProvider: (provider: string) => ipcRenderer.invoke('ai:setProvider', provider),
+  testAiConnection: () => ipcRenderer.invoke('ai:test'),
+  getAiConfig: () => ipcRenderer.invoke('ai:config:get'),
+  setAiConfig: (update: unknown) => ipcRenderer.invoke('ai:config:set', update),
+  getAiUsage: (projectId?: string) => ipcRenderer.invoke('ai:usage', projectId),
 
   // Animation rendering (FFmpeg + sandboxed engine)
   getRenderStatus: () => ipcRenderer.invoke('render:status'),

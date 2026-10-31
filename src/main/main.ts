@@ -228,7 +228,10 @@ ipcMain.handle('secrets:status', async () => {
 ipcMain.handle('secrets:set', async (_event, name: unknown, value: unknown) => {
   if (!SECRET_NAMES.includes(name as SecretName)) throw new Error('Unknown secret');
   if (typeof value !== 'string' || !value.trim()) throw new Error('Invalid secret value');
-  await writeSecrets({ ...(await readSecrets()), [name as SecretName]: value.trim() });
+  const key = value.trim();
+  if (key.length < 20 || key.length > 512 || /\s/.test(key)) throw new Error('That doesn’t look like an API key. Copy the whole key from the Anthropic Console.');
+  await writeSecrets({ ...(await readSecrets()), [name as SecretName]: key });
+  pipeline.ai.keyChanged();
   return true;
 });
 
@@ -241,6 +244,7 @@ ipcMain.handle('secrets:delete', async (_event, name: unknown) => {
   } else {
     await writeSecrets(secrets);
   }
+  pipeline.ai.keyChanged();
   return true;
 });
 
@@ -251,6 +255,9 @@ const FILE_FILTERS: Record<string, Electron.FileFilter[]> = {
   media: [{ name: 'Video & audio', extensions: ['mp4', 'm4v', 'mov', 'webm', 'mkv', 'mp3', 'wav', 'm4a', 'aac'] }],
   captions: [{ name: 'Captions & transcripts', extensions: ['srt', 'vtt', 'txt'] }],
   image: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'svg'] }],
+  // Preset references: videos stay local (analysed on this computer); still images can be shown to
+  // Claude when the editor ticks them for a run.
+  reference: [{ name: 'Reference videos & images', extensions: ['mp4', 'm4v', 'mov', 'webm', 'mkv', 'png', 'jpg', 'jpeg', 'webp'] }],
 };
 
 ipcMain.handle('dialog:openFiles', async (event, options: { kind?: string; multiple?: boolean; title?: string }) => {
@@ -350,12 +357,29 @@ app.on('before-quit', (event) => {
   void Promise.race([transcription.cancelAll(), timeout]).finally(() => app.quit());
 });
 
-// --- Creative planning + sequence building (deterministic local planner; Claude only on request) ---
+// --- Creative planning + sequence building (local planner; Claude only when the editor runs it) ---
 
-registerPipeline(ipcMain, {
+// Test mode only: the E2E launcher (tests/e2e/launcher.cjs) sets EDISSISTANT_TEST_APPDATA, and the
+// tests point Claude at a mock server on this machine. Never honoured otherwise, and only for a
+// loopback address, so a stray environment variable can't send the key anywhere else.
+function testAnthropicBaseURL(): string | undefined {
+  const url = process.env.EDISSISTANT_ANTHROPIC_BASE_URL;
+  if (!url || !process.env.EDISSISTANT_TEST_APPDATA || app.isPackaged) return undefined;
+  try {
+    const u = new URL(url);
+    return u.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname) ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const pipeline = registerPipeline(ipcMain, {
   userDataPath: app.getPath('userData'),
   readSettings: () => (readJsonFile(getUserDataPath(SETTINGS_FILE)) || {}) as { ffmpegPath?: string },
+  // Read from the encrypted store on every request; never cached, logged or sent to the renderer.
   getApiKey: async () => (await readSecrets()).claudeApiKey ?? null,
+  encryptionAvailable: () => safeStorage.isAsyncEncryptionAvailable(),
+  anthropicBaseURL: testAnthropicBaseURL(),
 });
 
 // --- Local media protocol ---

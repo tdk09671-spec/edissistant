@@ -34,7 +34,64 @@ export function editorMessage(code: string, message: string): string {
     const damaged = /damaged|unsupported/.test(message);
     return `${what} ${damaged ? 'could not be loaded' : 'is not installed on this computer'}. Install it, or go to Export → Allow a fallback font.`;
   }
+  const claude = CLAUDE_MESSAGES[code];
+  if (claude) return `${claude(message)} ${UNCHANGED}`;
   return message;
+}
+
+const UNCHANGED = 'Nothing was changed: your plan, approvals and renders are as they were.';
+
+/** Claude run failures, in the editor's terms. A failed run is never retried automatically. */
+const CLAUDE_MESSAGES: Record<string, (message: string) => string> = {
+  NO_API_KEY: () => 'No Claude API key is saved. Add one in Settings → Claude API.',
+  PROVIDER_OFF: () => 'Claude is turned off. Choose Anthropic Claude in Settings → Claude API.',
+  AUTHENTICATION: () => 'Anthropic rejected the API key. Replace it in Settings → Claude API, then test the connection.',
+  PERMISSION: () => 'This API key isn’t allowed to use the selected model. Check the model in Settings → Claude API.',
+  NOT_FOUND: () => 'The selected model wasn’t found. Check the model name in Settings → Claude API.',
+  CREDITS: (m) => m,
+  RATE_LIMITED: () => 'Anthropic is limiting requests for this key right now. Wait a minute, then run again. Nothing was retried automatically.',
+  OVERLOADED: () => 'Anthropic is overloaded right now. Try again in a few minutes. Nothing was retried automatically.',
+  NETWORK: () => 'Couldn’t reach Anthropic. Check the internet connection, then run again.',
+  TIMEOUT: () => 'Claude didn’t answer in time. Try again, or with fewer rows. If Anthropic finished it anyway, it may still appear in your Console usage.',
+  SERVER_ERROR: (m) => `Anthropic returned an error (${m.replace(/\.$/, '')}). Try again later.`,
+  BAD_REQUEST: (m) => m,
+  BUDGET_EXCEEDED: (m) => `${m} Raise the limit in Settings → Claude API, or run on fewer rows.`,
+  INVALID_RESPONSE: () => 'Claude’s answer didn’t pass the app’s checks, so it wasn’t used. You were billed for it; usage shows it. Try again, or plan these rows locally.',
+  REFUSED: () => 'Claude declined this request. Plan these rows locally, or reword the brief.',
+  TRUNCATED: () => 'Claude’s answer was cut off at the output limit, so it wasn’t used. Run again on fewer rows.',
+  CANCELLED: () => 'The Claude run was cancelled. A request that had already reached Anthropic may still be billed.',
+  BUSY: () => 'A Claude run for this project is already in progress.',
+  INVALID_REFERENCE: (m) => m,
+  INVALID_INPUT: (m) => m,
+};
+
+export const CLAUDE_TITLES: Record<string, string> = {
+  NO_API_KEY: 'No Claude API key',
+  PROVIDER_OFF: 'Claude is turned off',
+  AUTHENTICATION: 'API key rejected',
+  PERMISSION: 'Model not allowed for this key',
+  NOT_FOUND: 'Model not found',
+  CREDITS: 'No Anthropic credit left',
+  RATE_LIMITED: 'Rate limited by Anthropic',
+  OVERLOADED: 'Anthropic is overloaded',
+  NETWORK: 'No connection to Anthropic',
+  TIMEOUT: 'Claude timed out',
+  SERVER_ERROR: 'Anthropic error',
+  BAD_REQUEST: 'Request rejected',
+  BUDGET_EXCEEDED: 'Spending limit reached',
+  INVALID_RESPONSE: 'Claude’s answer was rejected',
+  REFUSED: 'Claude declined',
+  TRUNCATED: 'Claude’s answer was cut off',
+  CANCELLED: 'Claude run cancelled',
+  BUSY: 'Already running',
+  INVALID_REFERENCE: 'Reference can’t be sent',
+};
+
+/** "$0.0123" for small amounts, "$1.23" otherwise. */
+export function usd(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined) return 'unpriced';
+  if (amount > 0 && amount < 0.01) return `$${amount.toFixed(4)}`;
+  return `$${amount.toFixed(2)}`;
 }
 
 /** Unwraps an IPC result, throwing a PipelineFailure with the engine's code and message. */
@@ -81,6 +138,22 @@ export function planningInput(project: Project, presets: Preset[]): ProjectPlann
     })),
   };
 }
+
+/**
+ * Rows a Claude run may give a new suggestion: one the editor asked about, or (for the whole
+ * project) rows planned locally that the editor hasn't decided yet. Approved and edited rows, and
+ * rows that already have a Claude suggestion, are kept (new, changed and rejected rows are always
+ * planned).
+ */
+export function claudeReplanIds(project: Project, segmentId?: string): string[] {
+  if (segmentId) return [segmentId];
+  return getSegments(project)
+    .filter((s) => s.plan && s.plan.source === 'local' && !s.plan.editorChoice && ['suggested', 'needs-regeneration', 'rejected'].includes(s.plan.planStatus))
+    .map((s) => s.id);
+}
+
+/** Reference files Claude can be shown (still images). Videos are never sent. */
+export const REFERENCE_IMAGE = /\.(png|jpe?g|webp)$/i;
 
 /** Writes plan results onto the rows. Transcript, timing and instructions are never changed. */
 export function applyUpdates(project: Project, updates: SegmentUpdate[]): Project {
