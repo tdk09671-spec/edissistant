@@ -38,11 +38,20 @@ export interface ParsedWhisperOutput {
   /** Where word times came from: DTW alignment, whisper token times, or spread evenly over segments. */
   timingSource: 'dtw' | 'tokens' | 'interpolated';
   /**
-   * Indices of words whose start is a whisper segment boundary rather than a measured word onset.
-   * Without DTW, whisper.cpp pins a segment's first token to the segment start, which it usually
-   * places where the previous segment ended (before the pause), so these starts are often early.
+   * Words whose start is a whisper segment boundary rather than a measured word onset. Without DTW,
+   * whisper.cpp pins a segment's first token to the segment start, which it usually places where
+   * the previous segment ended (before the pause), so these starts are often early.
    */
-  anchoredStarts: number[];
+  anchoredStarts: AnchoredStart[];
+}
+
+export interface AnchoredStart {
+  /** Index of the segment's first word in `words`. */
+  index: number;
+  /** Number of words in that segment. */
+  count: number;
+  /** The segment's word times are estimates spread over the segment (no token timing). */
+  estimated: boolean;
 }
 
 export interface ParseWhisperOptions {
@@ -80,7 +89,7 @@ export function parseWhisperCppJson(raw: string, options: ParseWhisperOptions = 
   }
 
   const words: TranscriptWord[] = [];
-  const anchoredStarts: number[] = [];
+  const anchoredStarts: AnchoredStart[] = [];
   let anyTokenTiming = false;
   let allTokenTiming = true;
   let allDtw = true;
@@ -99,12 +108,14 @@ export function parseWhisperCppJson(raw: string, options: ParseWhisperOptions = 
       anyTokenTiming = true;
       if (!fromTokens.usedDtw) allDtw = false;
       words.push(...fromTokens.words);
-      if (!fromTokens.usedDtw && fromTokens.words.length && Math.abs(fromTokens.words[0].start - roundTime(segStart)) < 0.0015) anchoredStarts.push(first);
+      if (!fromTokens.usedDtw && fromTokens.words.length && Math.abs(fromTokens.words[0].start - roundTime(segStart)) < 0.0015) {
+        anchoredStarts.push({ index: first, count: fromTokens.words.length, estimated: false });
+      }
     } else {
       allTokenTiming = false;
       allDtw = false;
       words.push(...interpolateWords(tokenizeText(text), segStart, segEnd));
-      if (words.length > first) anchoredStarts.push(first);
+      if (words.length > first) anchoredStarts.push({ index: first, count: words.length - first, estimated: true });
     }
   }
 

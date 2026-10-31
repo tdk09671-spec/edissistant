@@ -27,6 +27,8 @@ function signal(seconds: number, bursts: [number, number][]): Int16Array {
   return out;
 }
 const words = (spec: [string, number, number][]) => spec.map(([text, start, end]) => ({ text, start, end }));
+/** Token-timed anchors (first word of a 2-word segment, as in the fixture below). */
+const at = (...indices: number[]) => indices.map((index) => ({ index, count: 2, estimated: false }));
 
 describe('speech onsets for anchored sentence starts', () => {
   // Speech at 1.237–2.1, 2.48–3.3 (a 0.38 s pause), 4.905–6.0. Engine starts: early whole seconds
@@ -43,7 +45,7 @@ describe('speech onsets for anchored sentence starts', () => {
   ]);
 
   it('moves early and late anchored starts to the measured onset, within 10 ms', () => {
-    const r = refineAnchoredStarts(engine, [0, 2, 4], env);
+    const r = refineAnchoredStarts(engine, at(0, 2, 4), env);
     expect(r.words[0].start).toBeCloseTo(1.237, 1);
     expect(Math.abs(r.words[0].start - 1.237)).toBeLessThanOrEqual(0.01);
     expect(Math.abs(r.words[2].start - 2.48)).toBeLessThanOrEqual(0.01);
@@ -53,14 +55,14 @@ describe('speech onsets for anchored sentence starts', () => {
   });
 
   it('never touches measured words or any word end', () => {
-    const r = refineAnchoredStarts(engine, [0, 2, 4], env);
+    const r = refineAnchoredStarts(engine, at(0, 2, 4), env);
     for (const i of [1, 3, 5, 6]) expect(r.words[i]).toEqual(engine[i]);
     r.words.forEach((w, i) => expect(w.end).toBe(engine[i].end));
     expect(engine[0].start).toBe(1.0); // input not mutated
   });
 
   it('leaves a start with no speech in its span alone and counts it as unchecked', () => {
-    const r = refineAnchoredStarts(engine, [6], env);
+    const r = refineAnchoredStarts(engine, [{ index: 6, count: 1, estimated: false }], env);
     expect(r.words[6]).toEqual(engine[6]);
     expect(r).toMatchObject({ refined: 0, unchecked: 1 });
   });
@@ -72,16 +74,33 @@ describe('speech onsets for anchored sentence starts', () => {
       ['two.', 1.2, 1.8],
       ['Three', 1.8, 2.4],
     ]);
-    const r = refineAnchoredStarts(w, [2], joined);
+    const r = refineAnchoredStarts(w, [{ index: 2, count: 1, estimated: false }], joined);
     expect(r.words[2].start).toBe(1.8);
   });
 
   it('keeps at least 50 ms of the word and handles silence-only audio', () => {
     const late = energyEnvelope(signal(3, [[1.48, 2.5]]), RATE);
-    const r = refineAnchoredStarts(words([['Hi', 1.0, 1.5]]), [0], late);
+    const r = refineAnchoredStarts(words([['Hi', 1.0, 1.5]]), [{ index: 0, count: 1, estimated: false }], late);
     expect(r.words[0].start).toBeLessThanOrEqual(1.45);
     expect(speechThreshold(energyEnvelope(signal(2, []), RATE))).toBeGreaterThan(0);
-    expect(refineAnchoredStarts(words([['Hi', 0.5, 1]]), [0], energyEnvelope(signal(2, []), RATE))).toMatchObject({ refined: 0, unchecked: 1 });
+    expect(refineAnchoredStarts(words([['Hi', 0.5, 1]]), [{ index: 0, count: 1, estimated: false }], energyEnvelope(signal(2, []), RATE))).toMatchObject({ refined: 0, unchecked: 1 });
+  });
+
+  it('estimated word times (no token timing): searches the whole segment and spreads its words from the onset', () => {
+    // Segment 11.165–13.23 s, speech from 11.338 s. Spread evenly, "So" ends at ~11.33 s, before the speech.
+    const env2 = energyEnvelope(signal(14, [[11.338, 13.0]]), RATE);
+    const texts = ['So', 'we', 'asked', 'one', 'question.'];
+    const spread = texts.map((text, i, all) => {
+      const w = all.map((t) => t.length);
+      const total = w.reduce((a, b) => a + b, 0);
+      const before = w.slice(0, i).reduce((a, b) => a + b, 0);
+      return { text, start: 11.165 + (2.065 * before) / total, end: 11.165 + (2.065 * (before + w[i])) / total };
+    });
+    const r = refineAnchoredStarts(spread, [{ index: 0, count: 5, estimated: true }], env2);
+    expect(Math.abs(r.words[0].start - 11.338)).toBeLessThanOrEqual(0.01);
+    expect(r.words[4].end).toBeCloseTo(13.23, 6);
+    for (let i = 1; i < 5; i++) expect(r.words[i].start).toBeCloseTo(r.words[i - 1].end, 6);
+    expect(r).toMatchObject({ refined: 1, unchecked: 0 });
   });
 });
 
@@ -99,7 +118,7 @@ describe('whisper.cpp output: which starts are anchored', () => {
   it('token timing without DTW: each segment’s first word is anchored', () => {
     const out = parseWhisperCppJson(json(false));
     expect(out.timingSource).toBe('tokens');
-    expect(out.anchoredStarts).toEqual([0, 2]);
+    expect(out.anchoredStarts).toEqual([{ index: 0, count: 2, estimated: false }, { index: 2, count: 2, estimated: false }]);
     expect(out.words.map((w) => w.start)).toEqual([1, 1.5, 2.1, 2.8]);
   });
 
@@ -113,7 +132,7 @@ describe('whisper.cpp output: which starts are anchored', () => {
   it('segment-only output: every segment’s first word is anchored (word times are estimates)', () => {
     const out = parseWhisperCppJson(JSON.stringify({ transcription: [{ offsets: { from: 0, to: 2000 }, text: ' Hello there.' }, { offsets: { from: 2000, to: 4000 }, text: ' Bye.' }] }));
     expect(out.timingSource).toBe('interpolated');
-    expect(out.anchoredStarts).toEqual([0, 2]);
+    expect(out.anchoredStarts).toEqual([{ index: 0, count: 2, estimated: true }, { index: 2, count: 1, estimated: true }]);
   });
 });
 
