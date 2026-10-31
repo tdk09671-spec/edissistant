@@ -33,7 +33,8 @@
       { "file": "tests/unit/transcription/onsets.test.ts", "reason": "End-to-end onset test needs FFmpeg and a POSIX shell; covered by the Linux job." },
       { "file": "tests/unit/transcription/service.test.ts", "reason": "Needs FFmpeg (not installed on the Windows runner); covered by the Linux job." },
       { "file": "tests/unit/transcription/coverage.test.ts", "reason": "The service-level dropped-speech tests need FFmpeg (not installed on the Windows runner); the pure detection tests still run. Covered by the Linux job." },
-      { "file": "tests/unit/transcription/onsetScenes.test.ts", "reason": "The real-TTS onset tests need FFmpeg with libflite (not on the Windows runner); the synthetic-scene tests still run. Covered by the Linux job." }
+      { "file": "tests/unit/transcription/onsetScenes.test.ts", "reason": "The real-TTS onset tests need FFmpeg with libflite (not on the Windows runner); the synthetic-scene tests still run. Covered by the Linux job." },
+      { "file": "tests/unit/transcription/boundaries.test.ts", "reason": "The real-TTS boundary tests need FFmpeg with libflite (not on the Windows runner); the synthetic-scene tests still run. Covered by the Linux job." }
     ]
   },
   "playwright": {
@@ -46,7 +47,18 @@
         "file": "tests/e2e/review-instruction.spec.ts",
         "test": "an instruction edited in Review on an approved segment is applied and re-rendered, never silently ignored",
         "reason": "Renders a preview, so it needs FFmpeg (not installed on the Windows runner); the other tests in the file run. Covered by the Linux job."
-      }
+      },
+      {
+        "file": "tests/e2e/graphic-timing.spec.ts",
+        "test": "the editor sets a graphic’s in/out on exact 29.97 frames; only it re-renders; it persists and resets to the speech timing",
+        "reason": "Renders previews, so it needs FFmpeg (not installed on the Windows runner). Covered by the Linux job."
+      },
+      {
+        "file": "tests/e2e/export-warning.spec.ts",
+        "test": "an export made anyway is recorded and shown as outdated",
+        "reason": "Writes an export, so it needs FFmpeg (not installed on the Windows runner); the pre-export warning test runs. Covered by the Linux job."
+      },
+      { "file": "tests/e2e/dtw-setting.spec.ts", "reason": "Needs FFmpeg and a POSIX shell for the stand-in whisper-cli; covered by the Linux job." }
     ]
   }
 }

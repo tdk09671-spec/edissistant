@@ -65,8 +65,8 @@ and the engine docs. CI runs the existing suites; it doesn't change them.
 | --- | --- | --- |
 | Linux, unit | `referenceAnalysis` › on `PLANNING_REFERENCE_VIDEO` | Opt-in, needs the editor's own reference video |
 | Linux, unit | `whisperCpp` › Unicode model paths on Windows | Windows only; runs in the Windows job (and must not skip there) |
-| Windows, unit | Any test in: `planning/referenceAnalysis`, `pipeline/flow`, `pipeline/media`, `render/compose`, `render/encoder`, `render/service`, `transcription/ffmpeg`, `transcription/onsets`, `transcription/service`, `transcription/coverage`, `transcription/onsetScenes` | Need FFmpeg, some with libflite or a POSIX shell. All run on Linux |
-| Windows, E2E | `pipeline.spec`, `transcription.spec`, `rendering.spec`, and the rendering test in `review-instruction.spec` | Need FFmpeg (and a POSIX shell for the stand-in engines); all run on Linux |
+| Windows, unit | Any test in: `planning/referenceAnalysis`, `pipeline/flow`, `pipeline/media`, `render/compose`, `render/encoder`, `render/service`, `transcription/ffmpeg`, `transcription/onsets`, `transcription/service`, `transcription/coverage`, `transcription/onsetScenes`, `transcription/boundaries` | Need FFmpeg, some with libflite or a POSIX shell. All run on Linux |
+| Windows, E2E | `pipeline.spec`, `transcription.spec`, `rendering.spec`, `dtw-setting.spec`, and the tests that render or export in `review-instruction.spec`, `graphic-timing.spec` and `export-warning.spec` | Need FFmpeg (and a POSIX shell for the stand-in engines); all run on Linux |
 | Linux, E2E | None | |
 
 To allow a new skip, add an entry with a reason. To allow one test, give `"test"` as its full name
@@ -83,8 +83,8 @@ Ubuntu 24.04 container with a warm npm cache. Runner times are estimates, not me
 | apt install FFmpeg, fonts, Xvfb | n/a (preinstalled) | 1–2 min |
 | `npm ci` + Electron download | 5 s (warm cache) | 0.5–1.5 min |
 | Typecheck + build | 3 s | 20–40 s |
-| Unit tests (465) | 15 s | 20–40 s |
-| E2E (37 tests) | 5 min 20 s (`pipeline.spec` about 4 min) | 5–8 min |
+| Unit tests (486) | 18 s | 20–40 s |
+| E2E (41 tests) | 5 min 55 s (`pipeline.spec` about 4 min) | 6–9 min |
 | **Linux job** | | **about 8–12 min** |
 | **Windows job** (no apt; E2E about 40 s of tests) | not run | **about 5–8 min** |
 
