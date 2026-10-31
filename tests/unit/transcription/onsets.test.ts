@@ -84,6 +84,10 @@ describe('speech onsets for anchored sentence starts', () => {
     for (let i = Math.round(3.12 * RATE); i < Math.round(3.2 * RATE); i++) samples[i] += Math.round(300 * Math.sin(i * 1.7) + 150 * Math.sin(i * 2.9));
     const r = refineAnchoredStarts(words([['First', 2.8, 3.6]]), [{ index: 0, count: 1, estimated: false }], energyEnvelope(samples, RATE));
     expect(Math.abs(r.words[0].start - 3.12)).toBeLessThanOrEqual(0.01);
+    // A one-frame dip inside the consonant (seen in real speech) doesn't stop it.
+    for (let i = Math.round(3.15 * RATE); i < Math.round(3.16 * RATE); i++) samples[i] = 0;
+    const dip = refineAnchoredStarts(words([['First', 2.8, 3.6]]), [{ index: 0, count: 1, estimated: false }], energyEnvelope(samples, RATE));
+    expect(Math.abs(dip.words[0].start - 3.12)).toBeLessThanOrEqual(0.01);
   });
 
   it('keeps at least 50 ms of the word and handles silence-only audio', () => {
