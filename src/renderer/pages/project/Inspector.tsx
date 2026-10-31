@@ -4,6 +4,7 @@ import { useData } from '../../state/DataProvider';
 import { builtInPresets, presetTypeInfo, segmentStatuses, visualModes } from '../../lib/catalog';
 import { formatClock, formatPrecise, formatTimecode, parseTime } from '../../lib/time';
 import { fileName, isElectron } from '../../lib/project';
+import { instructionPending } from '../../lib/pipeline';
 import {
   Badge,
   Button,
@@ -138,7 +139,8 @@ function SuggestionPanel({ segment, pipeline, buildResult }: { segment: Segment;
     );
   }
   const status = PLAN_STATUS[plan.planStatus] ?? PLAN_STATUS.suggested;
-  const approved = plan.planStatus === 'approved' && !plan.stale;
+  const pending = instructionPending(segment, plan);
+  const approved = plan.planStatus === 'approved' && !plan.stale && !pending;
   return (
     <div data-testid="suggestion-panel" className="flex flex-col gap-3 rounded-[12px] border border-line bg-surface-1 p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -153,10 +155,19 @@ function SuggestionPanel({ segment, pipeline, buildResult }: { segment: Segment;
         {visualModes.find((m) => m.value === plan.mode)?.label} · {plan.meaning}
       </p>
       <p className="text-[13.5px] leading-relaxed text-ink-2">{plan.reasoning}</p>
-      {plan.stale && (
-        <Notice tone="signal" icon={<IconInfo size={16} />} title="Changed after approval">
-          {plan.stale} It won't render until you review it.
+      {pending ? (
+        <Notice tone="signal" icon={<IconInfo size={16} />} title="Instruction not applied yet">
+          {segment.instruction.trim()
+            ? `This graphic was planned ${plan.plannedInstruction ? `with “${plan.plannedInstruction}”` : 'without an instruction'}. Apply “${segment.instruction.trim()}” to replan it, or keep the current graphic.`
+            : `The instruction was removed. The graphic still follows “${plan.plannedInstruction}”.`}
+          {plan.planStatus === 'approved' ? ' It won’t render until you decide.' : ''}
         </Notice>
+      ) : (
+        plan.stale && (
+          <Notice tone="signal" icon={<IconInfo size={16} />} title="Changed after approval">
+            {plan.stale} It won't render until you review it.
+          </Notice>
+        )
       )}
       {!plan.renderable && (
         <Notice tone="neutral" icon={<IconInfo size={16} />} title="Not a rendered graphic">
@@ -192,7 +203,24 @@ function SuggestionPanel({ segment, pipeline, buildResult }: { segment: Segment;
         </Select>
       </Field>
       <div className="flex flex-wrap gap-2">
-        {plan.stale ? (
+        {pending ? (
+          <>
+            {segment.instruction.trim() && (
+              <Button size="sm" variant="primary" disabled={busy} onClick={() => void pipeline.setStatus(segment, 'approved')}>
+                Apply instruction
+              </Button>
+            )}
+            {plan.planStatus === 'approved' && (
+              <Tooltip content="Keep the approved graphic as it is; the instruction is not applied">
+                <span>
+                  <Button size="sm" variant={segment.instruction.trim() ? 'secondary' : 'primary'} disabled={busy} onClick={() => void pipeline.act(segment.id, { type: 'acknowledge-change' })}>
+                    Keep current graphic
+                  </Button>
+                </span>
+              </Tooltip>
+            )}
+          </>
+        ) : plan.stale ? (
           <>
             <Button size="sm" variant="primary" disabled={busy} onClick={() => void pipeline.act(segment.id, { type: 'acknowledge-change' })}>
               Keep approval

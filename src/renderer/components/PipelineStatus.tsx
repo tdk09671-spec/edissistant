@@ -54,7 +54,7 @@ export function PipelineStatus({ pipeline, className }: { pipeline: Pipeline; cl
   if (notice) {
     return (
       <Notice
-        tone={notice.tone === 'success' ? 'success' : 'neutral'}
+        tone={notice.tone === 'success' ? 'success' : notice.tone === 'warning' ? 'signal' : 'neutral'}
         className={className}
         icon={notice.tone === 'success' ? <IconCheckCircle size={16} /> : <IconInfo size={16} />}
         title={notice.title}
@@ -64,7 +64,9 @@ export function PipelineStatus({ pipeline, className }: { pipeline: Pipeline; cl
           </IconButton>
         }
       >
-        <span data-testid="pipeline-notice">{notice.message}</span>
+        <span data-testid="pipeline-notice" data-tone={notice.tone}>
+          {notice.message}
+        </span>
       </Notice>
     );
   }

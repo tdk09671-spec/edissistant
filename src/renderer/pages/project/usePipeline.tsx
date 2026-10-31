@@ -10,7 +10,9 @@ import {
   editorMessage,
   applyUpdates,
   exportProblems,
+  changesNotRendered,
   fileTimecode,
+  instructionPending,
   PipelineFailure,
   planningInput,
   timeline,
@@ -18,9 +20,12 @@ import {
   unwrap,
 } from '../../lib/pipeline';
 import type { EditorAction } from '../../../shared/planning/approval';
+import { segmentFrames } from '../../../shared/animation/timeline';
+import { visualModeInfo } from '../../lib/catalog';
 import type { AppSettings, ExportRecord, MediaCheck, Preset, Project, RenderTarget, Segment, SegmentStatus } from '../../types';
 
 export type JobKind = 'transcribe' | 'plan' | 'render' | 'export';
+
 
 export interface PipelineJob {
   kind: JobKind;
@@ -40,7 +45,7 @@ export interface PipelineError {
 export interface PipelineNotice {
   title: string;
   message: string;
-  tone: 'success' | 'info';
+  tone: 'success' | 'info' | 'warning';
 }
 
 export interface ExportOptions {
@@ -248,9 +253,24 @@ export function usePipeline(
     async (segmentId: string, action: EditorAction) => {
       await run('plan', async (progress) => {
         progress(null, 'Updating the plan…');
+        const before = getSegments(project()).find((s) => s.id === segmentId)?.plan;
         const outcome = unwrap(await api!.planAction({ ...planningInput(project(), presetsRef.current), segmentId, action }));
         update((current) => applyUpdates(current, outcome.updates));
-        if (outcome.deferred) setNotice({ title: 'New suggestion', message: outcome.deferred, tone: 'info' });
+        const after = outcome.updates.find((u) => u.id === segmentId)?.plan;
+        if (outcome.instruction) {
+          const { status, message } = outcome.instruction;
+          const title = status === 'applied' ? 'Instruction applied' : status === 'kept' ? 'Graphic kept' : status === 'partial' ? 'Instruction partly applied' : 'Instruction not applied';
+          setNotice({ title, message, tone: status === 'applied' || status === 'kept' ? 'success' : 'warning' });
+        } else if (outcome.deferred) setNotice({ title: 'New suggestion', message: outcome.deferred, tone: 'info' });
+        else if (action.type === 'edit' && before && after) {
+          // A concept and a visual mode that don't fit are aligned automatically; say so on screen.
+          const modeLabel = (m: string) => visualModeInfo(m as Parameters<typeof visualModeInfo>[0])?.label ?? m;
+          if (action.overrides.conceptId && before.mode !== after.mode) {
+            setNotice({ title: 'Visual mode switched', message: `${after.conceptLabel} needs ${modeLabel(after.mode)}, so the visual mode changed from ${modeLabel(before.mode)} to ${modeLabel(after.mode)}.`, tone: 'info' });
+          } else if (action.overrides.visualMode && before.conceptId !== after.conceptId) {
+            setNotice({ title: 'Concept switched', message: `${before.conceptLabel} can’t be shown as ${modeLabel(after.mode)}, so the concept changed to ${after.conceptLabel}.`, tone: 'info' });
+          }
+        }
       });
     },
     [run, update]
@@ -262,7 +282,7 @@ export function usePipeline(
         update((p) => ({ ...p, segments: (p.segments ?? []).map((s) => (s.id === segment.id ? { ...s, status } : s)) }));
         return;
       }
-      const action = actionForStatus(segment.plan, status);
+      const action = actionForStatus(segment.plan, status, { instructionPending: instructionPending(segment, segment.plan) });
       if (action) await act(segment.id, action);
     },
     [act, update]
@@ -308,11 +328,13 @@ export function usePipeline(
           segments: built.results,
         },
       }));
-      setNotice({
-        title: 'Preview ready',
-        message: `Rendered ${result.rendered.length} graphic(s), reused ${result.reused.length} unchanged from the cache.`,
-        tone: 'success',
-      });
+      const counts = `Rendered ${result.rendered.length} graphic(s), reused ${result.reused.length} unchanged from the cache.`;
+      const left = changesNotRendered(applyUpdates(project(), built.updates));
+      setNotice(
+        left
+          ? { title: 'Preview updated, but not every change is in it', message: `${counts} ${left}`, tone: 'warning' }
+          : { title: 'Preview ready', message: counts, tone: 'success' }
+      );
     });
   }, [run, update]);
 
@@ -344,7 +366,8 @@ export function usePipeline(
               return {
                 path: s.path,
                 name: `${fileName}_${String(i + 1).padStart(2, '0')}_${fileTimecode(spec.start, t.fps)}${target === 'captions' ? '_captions' : ''}`,
-                expect: { width: t.width, height: t.height, fps: t.fps, duration: spec.duration, alpha: true, audio: false },
+                // Exactly the frames the graphic covers on the timeline, so the NLE out-point is right.
+                expect: { width: t.width, height: t.height, fps: t.fps, duration: spec.duration, frames: segmentFrames(spec.start, spec.duration, t.fps).count, alpha: true, audio: false },
               };
             });
         progress(0.99, 'Copying and checking the exported files…');
@@ -359,7 +382,12 @@ export function usePipeline(
         }
         const record: ExportRecord = { id: uuid(), target, createdAt: new Date().toISOString(), folder, files };
         update((current) => ({ ...current, exports: [record, ...(current.exports ?? [])].slice(0, 20) }));
-        setNotice({ title: 'Export complete', message: `${files.length} file(s) written and checked in ${folder}.`, tone: 'success' });
+        const left = target === 'captions' ? null : changesNotRendered(applyUpdates(project(), built.updates));
+        setNotice(
+          left
+            ? { title: 'Export complete, but not every change is in it', message: `${files.length} file(s) written and checked in ${folder}. ${left}`, tone: 'warning' }
+            : { title: 'Export complete', message: `${files.length} file(s) written and checked in ${folder}.`, tone: 'success' }
+        );
         return record;
       }),
     [run, update]

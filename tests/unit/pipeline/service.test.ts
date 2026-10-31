@@ -114,6 +114,87 @@ describe('PipelineService', () => {
   });
 });
 
+// Windows validation round 2 (a6fe66f), bug D: Review → segment 6 → instruction "Show it as bars." →
+// Approved → Update preview rendered 0 graphics and kept the old one.
+describe('Windows regression: an edited instruction on an approved segment is applied, never dropped', () => {
+  const approvedAll = async (svc: PipelineService, ids: string[]) => {
+    await svc.plan(input());
+    for (const id of ids) await svc.act({ ...input(), segmentId: id, action: { type: 'approve' } });
+  };
+  const bars = input((s) => (s.id === 'a3' ? { ...s, instruction: 'Show it as bars.' } : s));
+  const spec = (b: Awaited<ReturnType<PipelineService['build']>>, id: string) => b.sequence.segments.find((s) => b.specIds[s.id] === id);
+
+  it('approve applies the instruction in one step, whether or not a build synced first', async () => {
+    for (const syncFirst of [false, true]) {
+      const svc = service();
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(dir);
+      await approvedAll(svc, ['a2', 'a3', 'a5', 'a6']);
+      const before = await svc.build(build(input()));
+      expect(byId(await svc.plan(input()), 'a3').plan.plannedInstruction).toBe('');
+      if (syncFirst) {
+        // The old flow: Update preview before approving leaves it out and says why.
+        const flagged = await svc.build(build(bars));
+        expect(flagged.results.find((r) => r.segmentId === 'a3')).toMatchObject({ status: 'not-approved', reason: expect.stringMatching(/instruction changed/) });
+        expect(flagged.updates.find((u) => u.id === 'a3')!.plan.plannedInstruction).toBe('');
+      }
+      const applied = await svc.act({ ...bars, segmentId: 'a3', action: { type: 'approve' } });
+      expect(applied.instruction).toMatchObject({ status: 'applied', message: expect.stringMatching(/Show it as bars/) });
+      expect(byId(applied, 'a3')).toMatchObject({ status: 'approved', plan: { conceptId: 'bar-comparison', planStatus: 'approved', plannedInstruction: 'Show it as bars.' } });
+      expect(byId(applied, 'a3').plan.stale).toBeUndefined();
+
+      const after = await svc.build(build(bars));
+      expect(after.results.find((r) => r.segmentId === 'a3')).toMatchObject({ status: 'renderable', conceptId: 'bar-comparison' });
+      // Only a3 changed: the others hit PR #2's render cache.
+      for (const id of ['a2', 'a5', 'a6']) expect(spec(after, id)).toEqual(spec(before, id));
+      expect(spec(after, 'a3')).not.toEqual(spec(before, 'a3'));
+    }
+  });
+
+  it('an instruction the planner doesn’t understand is not applied, and the old graphic is not rendered as if it were', async () => {
+    const svc = service();
+    await approvedAll(svc, ['a2', 'a6']);
+    const vague = input((s) => (s.id === 'a6' ? { ...s, instruction: 'make it feel more premium' } : s));
+    const outcome = await svc.act({ ...vague, segmentId: 'a6', action: { type: 'approve' } });
+    expect(outcome.instruction).toMatchObject({ status: 'not-applied', message: expect.stringMatching(/wasn’t applied.*keeps its approved graphic/) });
+    expect(byId(outcome, 'a6')).toMatchObject({ status: 'needs-revision', plan: { planStatus: 'approved', plannedInstruction: '', stale: expect.stringMatching(/instruction changed/) } });
+    const built = await svc.build(build(vague));
+    expect(built.results.find((r) => r.segmentId === 'a6')).toMatchObject({ status: 'not-approved' });
+    expect(built.results.find((r) => r.segmentId === 'a2')).toMatchObject({ status: 'renderable' });
+
+    // The editor can explicitly keep the approved graphic instead.
+    const kept = await svc.act({ ...vague, segmentId: 'a6', action: { type: 'acknowledge-change' } });
+    expect(byId(kept, 'a6')).toMatchObject({ status: 'approved', plan: { plannedInstruction: 'make it feel more premium' } });
+  });
+
+  it('a partly understood instruction is applied as far as it goes and left for review, never approved silently', async () => {
+    const svc = service();
+    await approvedAll(svc, ['a6']);
+    const partial = input((s) => (s.id === 'a6' ? { ...s, instruction: 'make it a list, in neon green' } : s));
+    const outcome = await svc.act({ ...partial, segmentId: 'a6', action: { type: 'approve' } });
+    expect(outcome.instruction).toMatchObject({ status: 'partial', message: expect.stringMatching(/neon green.*isn’t approved yet/) });
+    expect(byId(outcome, 'a6')).toMatchObject({ status: 'pending', plan: { conceptId: 'list-stack', planStatus: 'suggested' } });
+  });
+
+  it('removing the instruction keeps the approved graphic', async () => {
+    const svc = service();
+    const listed = input((s) => (s.id === 'a6' ? { ...s, instruction: 'make it a list' } : s));
+    await svc.plan(listed);
+    await svc.act({ ...listed, segmentId: 'a6', action: { type: 'approve' } });
+    const concept = byId(await svc.plan(listed), 'a6').plan.conceptId;
+    const cleared = await svc.act({ ...input(), segmentId: 'a6', action: { type: 'approve' } });
+    expect(cleared.instruction).toMatchObject({ status: 'kept' });
+    expect(byId(cleared, 'a6')).toMatchObject({ status: 'approved', plan: { conceptId: concept, plannedInstruction: '' } });
+  });
+
+  it('approving an approved, unchanged segment is a no-op, not an error', async () => {
+    const svc = service();
+    await approvedAll(svc, ['a2']);
+    const again = await svc.act({ ...input(), segmentId: 'a2', action: { type: 'approve' } });
+    expect(byId(again, 'a2').status).toBe('approved');
+  });
+});
+
 describe('Windows regression: an incompatible concept no longer breaks the whole render', () => {
   it('the UI sequence that failed on Windows now renders, and other approved segments are unchanged', async () => {
     const svc = service();

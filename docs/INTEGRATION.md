@@ -102,6 +102,15 @@ type- and range-checked. Paths are probed read-only, and only files PR #2 render
    | Transparent motion graphics | One ProRes 4444 MOV with alpha per graphic, named `<name>_<NN>_<HH-MM-SS-FF>.mov` by its timeline position. |
    | Transparent captions | One ProRes 4444 MOV with alpha per segment (word-highlight captions), named the same way with `_captions`. The existing SRT export stays available. |
 
+   **The two transparent exports are numbered differently.** In motion-graphics files, `NN` counts
+   *graphics*: only segments that render a graphic get a file, so rows with "Stay on speaker" or no
+   graphic are skipped and the numbers close up. In caption files, `NN` counts *rows*: every row
+   with a transcript gets a file. The same `NN` can therefore name different rows, e.g.
+   `2997_07_00-00-31-29.mov` (the 7th graphic) and `2997_08_00-00-31-29_captions.mov` (the 8th row)
+   start at the same moment. **Match files by the timecode, which is each clip's first frame on the
+   timeline, not by the number.** Each clip is exactly as long as its span on the timeline:
+   `round(end × fps) − round(start × fps)` frames, checked at export.
+
    Not offered, because the engine doesn't produce it:
    - A single full-length alpha track: alpha is exported per clip, positioned by timecode.
    - A ProRes composite: the composite is H.264. ProRes 422 HQ exists only per segment in PR #2.
@@ -114,6 +123,16 @@ type- and range-checked. Paths are probed read-only, and only files PR #2 render
    - **Update preview.** Only the changed segment re-renders, and every other graphic comes from
      the render cache. The E2E run reports "Rendered 1 graphic(s), reused 8 unchanged from the
      cache".
+   - **Instruction on an approved segment** (Windows round 2, bug D). The row shows "Not applied
+     yet" with **Apply instruction**. The Inspector offers the same, plus **Keep current graphic**.
+     Applying replans that one segment with the instruction. If PR #3's local parser understood
+     all of it, the new plan is approved in the same step. If it understood only part, that part
+     is applied and left for review, and the notice names the rest. If it understood none of it,
+     nothing changes and the notice says so. Until the editor decides, the segment is left out of
+     renders. Update preview and Export then end with a warning that names it, never with a plain
+     "Preview ready". A suggestion that was never approved is replanned and shown first, as before.
+   - **Concept ↔ mode.** Picking a concept that needs another visual mode, or the reverse, switches
+     the other one and shows a "Visual mode switched" / "Concept switched" notice.
 
 ## Fixes found by the end-to-end run, now in their own branches
 

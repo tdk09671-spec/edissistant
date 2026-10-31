@@ -63,6 +63,10 @@ describe('plan → sequence rows', () => {
     expect(actionForStatus({ planStatus: 'needs-regeneration' }, 'needs-revision')).toBeNull();
     expect(actionForStatus({ planStatus: 'approved' }, 'pending')).toEqual({ type: 'edit', overrides: {} });
     expect(actionForStatus({ planStatus: 'suggested' }, 'pending')).toBeNull();
+    // A changed instruction goes to the main process to be applied, never acknowledged away.
+    expect(actionForStatus({ planStatus: 'approved' }, 'approved', { instructionPending: true })).toEqual({ type: 'approve' });
+    expect(actionForStatus({ planStatus: 'approved', stale: 'changed' }, 'approved', { instructionPending: true })).toEqual({ type: 'approve' });
+    expect(actionForStatus({ planStatus: 'rejected' }, 'approved', { instructionPending: true })).toBeNull();
   });
 
   it('parses export resolutions to even sizes', () => {

@@ -5,6 +5,7 @@ import { VideoPlayerShell, type PlayerHandle } from '../../components/VideoPlaye
 import { CommentPanel } from '../../components/CommentPanel';
 import { PipelineStatus } from '../../components/PipelineStatus';
 import { getSegments, mediaUrl, segmentAt } from '../../lib/project';
+import { instructionPending } from '../../lib/pipeline';
 import { segmentStatuses, segmentStatusInfo, visualModeInfo } from '../../lib/catalog';
 import { formatDateTime, formatTimecode } from '../../lib/time';
 import {
@@ -245,11 +246,24 @@ export default function Review() {
                   onChange={(e) => update((p) => ({ ...p, segments: (p.segments ?? []).map((s) => (s.id === focused.id ? { ...s, instruction: e.target.value } : s)) }))}
                   placeholder="Revision instruction, e.g. make it a list, slower"
                 />
-                {focused.plan && (
-                  <p className="mt-2 text-[12.5px] text-ink-3">
-                    Plan: <span className="text-ink-2">{focused.plan.conceptLabel}</span>
-                    {focused.plan.stale ? ' · changed after approval' : ''}
-                  </p>
+                {focused.plan && instructionPending(focused, focused.plan) ? (
+                  <div data-testid="instruction-pending" className="mt-2 flex flex-wrap items-center gap-2 text-[12.5px] text-warning">
+                    <span>
+                      {focused.instruction.trim()
+                        ? `Not applied yet: the ${focused.plan.conceptLabel} graphic doesn’t follow this instruction.`
+                        : `The instruction was removed; the ${focused.plan.conceptLabel} graphic still follows “${focused.plan.plannedInstruction}”.`}
+                    </span>
+                    <Button size="sm" variant="primary" disabled={busy} onClick={() => setStatus(focused.id, 'approved')}>
+                      {focused.instruction.trim() ? 'Apply instruction' : 'Keep current graphic'}
+                    </Button>
+                  </div>
+                ) : (
+                  focused.plan && (
+                    <p className="mt-2 text-[12.5px] text-ink-3">
+                      Plan: <span className="text-ink-2">{focused.plan.conceptLabel}</span>
+                      {focused.plan.stale ? ' · changed after approval' : ''}
+                    </p>
+                  )
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">

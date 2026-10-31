@@ -43,6 +43,12 @@ export interface SegmentPlanInfo {
   source: 'local' | 'model';
   /** Set when an approved segment changed afterwards and needs a look before it renders. */
   stale?: string;
+  /**
+   * The editor instruction the current graphic was planned with ('' for none). When the row's
+   * instruction differs, the editor's request hasn't been applied yet (see `instructionPending`).
+   * Absent in projects saved before this field existed.
+   */
+  plannedInstruction?: string;
   /** False when PR #2 has no way to render this concept (b-roll footage, maps…). */
   renderable: boolean;
   unsupportedReason?: string;
@@ -87,6 +93,8 @@ export interface PlanOutcome {
   cost: { calls: number; estimatedCost: number; warnings: string[] };
   /** Set when the requested decision was held back (e.g. approving a suggestion the editor hasn't seen). */
   deferred?: string;
+  /** What happened to a changed editor instruction when the segment was approved. */
+  instruction?: { status: 'applied' | 'partial' | 'not-applied' | 'kept'; message: string };
 }
 
 export interface ActRequest extends ProjectPlanningInput {

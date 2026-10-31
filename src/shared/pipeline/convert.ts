@@ -71,6 +71,7 @@ export function planInfo(s: SegmentPlan): SegmentPlanInfo {
     reasoning: s.suggestion.reasoning,
     source: s.suggestion.source,
     ...(s.stale ? { stale: s.stale.reason } : {}),
+    plannedInstruction: (s.stale?.instructionFrom ?? s.instruction ?? '').trim(),
     renderable: Boolean(concept && concept.components !== null),
     ...(concept?.components === null ? { unsupportedReason: concept.unsupportedReason ?? 'Not renderable.' } : {}),
     editorChoice: Boolean(s.overrides?.conceptId || s.overrides?.visualMode),
@@ -94,12 +95,24 @@ export function segmentUpdates(plan: ProjectPlan): SegmentUpdate[] {
 }
 
 /**
- * The editor action that moves a planned segment to the status picked in the UI, or null when the
- * status is already there or the move isn't a planning decision.
+ * True when the row's editor instruction differs from the one its current graphic was planned with:
+ * the editor asked for a change that hasn't been applied. Unknown (older projects) counts as false.
  */
-export function actionForStatus(current: Pick<SegmentPlanInfo, 'planStatus' | 'stale'>, target: UiSegmentStatus): EditorAction | null {
+export function instructionPending(row: { instruction: string }, plan: Pick<SegmentPlanInfo, 'plannedInstruction'> | undefined): boolean {
+  if (!plan || plan.plannedInstruction === undefined) return false;
+  return row.instruction.trim() !== plan.plannedInstruction.trim();
+}
+
+/**
+ * The editor action that moves a planned segment to the status picked in the UI, or null when the
+ * status is already there or the move isn't a planning decision. With a pending instruction,
+ * approving always goes to the main process, which applies the instruction (or says why not):
+ * acknowledging would keep the old graphic and drop the editor's request.
+ */
+export function actionForStatus(current: Pick<SegmentPlanInfo, 'planStatus' | 'stale'>, target: UiSegmentStatus, options: { instructionPending?: boolean } = {}): EditorAction | null {
   const status: ApprovalStatus = current.planStatus;
   if (target === 'approved') {
+    if (options.instructionPending && status !== 'rejected') return { type: 'approve' };
     if (status === 'approved') return current.stale ? { type: 'acknowledge-change' } : null;
     if (status === 'rejected') return null;
     return { type: 'approve' };

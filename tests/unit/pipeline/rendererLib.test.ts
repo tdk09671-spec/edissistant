@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adoptSourceTiming, applyUpdates, editorMessage, exportProblems, planningInput, timeline, transcriptRows } from '../../../src/renderer/lib/pipeline';
+import { adoptSourceTiming, applyUpdates, changesNotRendered, editorMessage, exportProblems, instructionPending, planningInput, timeline, transcriptRows } from '../../../src/renderer/lib/pipeline';
 import { segmentUpdates } from '../../../src/shared/pipeline/convert';
 import { CreativePlanner } from '../../../src/shared/planning';
 import { toPlanningInputs } from '../../../src/shared/pipeline/convert';
@@ -115,6 +115,47 @@ describe('source timing and export checks', () => {
     expect(exportProblems({ ...good, video: { ...good.video!, frames: 900 } }, expected)[0]).toMatch(/900 frames, expected 1067/);
     expect(exportProblems(good, { ...expected, alpha: true })).toEqual(['Has no alpha channel.']);
     expect(exportProblems({ ...good, video: null }, expected)).toEqual(['The file has no video stream.']);
+    // A graphic clip must have exactly its timeline span (Windows round 2: 146 frames instead of 145).
+    expect(exportProblems({ ...good, video: { ...good.video!, frames: 146 } }, { ...expected, frames: 145 })).toEqual(['Has 146 frames, expected 145.']);
+    expect(exportProblems({ ...good, video: { ...good.video!, frames: 145 } }, { ...expected, frames: 145 })).toEqual([]);
+  });
+});
+
+describe('changes a render can’t have picked up (Windows round 2, bug D)', () => {
+  const plan = (extra: Partial<NonNullable<Segment['plan']>> = {}): NonNullable<Segment['plan']> => ({
+    conceptId: 'counter-hero',
+    conceptLabel: 'Hero counter',
+    mode: 'motion-graphics',
+    planStatus: 'approved',
+    meaning: '',
+    reasoning: '',
+    source: 'local',
+    renderable: true,
+    editorChoice: false,
+    warnings: [],
+    plannedInstruction: '',
+    ...extra,
+  });
+
+  it('sees an edited instruction before any sync, and ignores projects saved before the field existed', () => {
+    expect(instructionPending({ instruction: 'Show it as bars.' }, plan())).toBe(true);
+    expect(instructionPending({ instruction: '  ' }, plan())).toBe(false);
+    expect(instructionPending({ instruction: '' }, plan({ plannedInstruction: 'make it a list' }))).toBe(true);
+    expect(instructionPending({ instruction: 'x' }, plan({ plannedInstruction: undefined }))).toBe(false);
+  });
+
+  it('names the rows left out instead of reporting a clean render', () => {
+    const rows = [
+      seg('s1', 0, 2, 'One.', { status: 'approved', plan: plan() }),
+      seg('s2', 2, 4, 'Two.', { status: 'approved', instruction: 'Show it as bars.', plan: plan() }),
+      seg('s3', 4, 6, 'Three.', { status: 'needs-revision', plan: plan({ stale: 'The transcript or timing changed after approval.' }) }),
+      seg('s4', 6, 8, 'Four.', { instruction: 'slower', plan: plan({ planStatus: 'suggested' }) }),
+    ];
+    const message = changesNotRendered(project(rows))!;
+    expect(message).toMatch(/instruction for segment 2 changed and hasn’t been applied/);
+    expect(message).toMatch(/segment 3 changed after approval/);
+    expect(message).not.toMatch(/segment 4/); // never approved: not a rendered graphic being ignored
+    expect(changesNotRendered(project([rows[0]]))).toBeNull();
   });
 });
 

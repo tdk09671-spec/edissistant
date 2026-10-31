@@ -4,7 +4,7 @@
 
 import { secondsToFrames } from '../../shared/animation/timeline';
 import { roundTime } from '../../shared/transcription';
-import { parseResolution } from '../../shared/pipeline/convert';
+import { instructionPending, parseResolution } from '../../shared/pipeline/convert';
 import type { PresetLike } from '../../shared/planning/styleProfile';
 import type { MediaCheck, PipelineResult, ProjectPlanningInput, SegmentUpdate, SourceInfo } from '../../shared/pipeline/types';
 import type { Transcript } from '../../shared/transcription';
@@ -12,7 +12,7 @@ import type { AppSettings, Preset, Project, Segment } from '../types';
 import { builtInPresets } from './catalog';
 import { createSegment, defaultExportSettings, getSegments, projectFps } from './project';
 
-export { actionForStatus, parseResolution } from '../../shared/pipeline/convert';
+export { actionForStatus, instructionPending, parseResolution } from '../../shared/pipeline/convert';
 
 export class PipelineFailure extends Error {
   constructor(
@@ -136,6 +136,8 @@ export interface ExportExpectation {
   fps: number;
   /** Seconds. */
   duration: number;
+  /** Exact frame count to require (a graphic's span on the timeline); otherwise duration ± 1 frame. */
+  frames?: number;
   alpha: boolean;
   audio: boolean;
 }
@@ -146,10 +148,30 @@ export function exportProblems(check: MediaCheck, expected: ExportExpectation): 
   const v = check.video;
   if (!v) return ['The file has no video stream.'];
   if (v.width !== expected.width || v.height !== expected.height) problems.push(`Size is ${v.width}×${v.height}, expected ${expected.width}×${expected.height}.`);
-  const frames = secondsToFrames(expected.duration, expected.fps);
-  if (Math.abs(v.frames - frames) > 1) problems.push(`Has ${v.frames} frames, expected ${frames}.`);
+  if (expected.frames !== undefined) {
+    if (v.frames !== expected.frames) problems.push(`Has ${v.frames} frames, expected ${expected.frames}.`);
+  } else {
+    const frames = secondsToFrames(expected.duration, expected.fps);
+    if (Math.abs(v.frames - frames) > 1) problems.push(`Has ${v.frames} frames, expected ${frames}.`);
+  }
   if (expected.alpha && !v.hasAlpha) problems.push('Has no alpha channel.');
   if (expected.audio && !check.audio) problems.push('Has no audio, but the source does.');
   if (check.sizeBytes <= 0) problems.push('The file is empty.');
   return problems;
+}
+
+/**
+ * Rows the editor changed that a render can't have picked up: an instruction not applied yet, or an
+ * approved plan whose transcript changed. Null when there are none. Windows validation round 2
+ * (bug D): the preview used to report success while an edited instruction was ignored.
+ */
+export function changesNotRendered(project: Project): string | null {
+  const rows = getSegments(project);
+  const label = (id: string) => `segment ${rows.findIndex((s) => s.id === id) + 1}`;
+  const instructions = rows.filter((s) => s.plan?.planStatus === 'approved' && instructionPending(s, s.plan)).map((s) => s.id);
+  const stale = rows.filter((s) => s.plan?.planStatus === 'approved' && s.plan.stale && !instructions.includes(s.id)).map((s) => s.id);
+  const parts: string[] = [];
+  if (instructions.length) parts.push(`The instruction for ${instructions.map(label).join(', ')} changed and hasn’t been applied, so it isn’t in this render. Use Apply instruction in Review or the Inspector.`);
+  if (stale.length) parts.push(`${stale.map(label).join(', ')} changed after approval and was left out. Review it in the Inspector.`);
+  return parts.length ? parts.join(' ') : null;
 }
