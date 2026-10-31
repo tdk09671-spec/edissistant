@@ -221,7 +221,8 @@ export class TranscriptionService {
     const language = (options.language || configured.language || 'auto').trim().toLowerCase();
     if (!/^(auto|[a-z]{2,3}(-[a-z]+)?)$/.test(language)) throw new TranscriptionError('INVALID_REQUEST', `Invalid language "${language}".`);
     const audioTrack = Math.max(0, Math.floor(options.audioTrack ?? 0));
-    const dtwAlignment = options.dtwAlignment === true;
+    // The request decides; otherwise the advanced setting (off by default).
+    const dtwAlignment = (options.dtwAlignment ?? configured.dtwAlignment) === true;
 
     const media = fingerprintFile(mediaPath);
     const engineStat = fs.statSync(enginePath);

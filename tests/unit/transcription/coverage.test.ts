@@ -148,6 +148,25 @@ describe.skipIf(!ffmpegPath)('dropped speech is detected and recovered (real FFm
     expect(transcript.warnings.join(' ')).toMatch(/Speech at .* has no text in the transcript/);
   });
 
+  it('the dtwAlignment setting turns DTW on by default; a request can still turn it off', async () => {
+    const record = path.join(root, 'setting.jsonl');
+    const settings = { ffmpegPath, transcription: { whisperPath: fakeWhisper, dtwAlignment: true } };
+    const svc = new TranscriptionService({
+      userDataPath: path.join(root, 'userData'),
+      getSettings: () => settings,
+      env: { PATH: '' },
+      tempDir: root,
+      createEngine: () => new WhisperCppEngine({ command: process.execPath, prefixArgs: [fakeWhisper, '--fake-mode=bursts', `--fake-record=${record}`] }),
+    });
+    const runs = () => fs.readFileSync(record, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as string[]).filter((a) => a.includes('-m'));
+    const on = await svc.transcribe({ mediaPath: media, options: { model: 'base.en' } }, { jobId: 'set' });
+    expect(on.transcript.timing?.source).toBe('dtw');
+    expect(runs().at(-1)).toEqual(expect.arrayContaining(['-dtw', 'base.en', '-nfa']));
+    await svc.transcribe({ mediaPath: media, options: { model: 'base.en', dtwAlignment: false, force: true } }, { jobId: 'off' });
+    expect(runs().at(-1)).not.toContain('-dtw');
+    expect(runs().at(-1)).not.toContain('-nfa');
+  });
+
   it('DTW stays opt-in: a request without dtwAlignment never passes -dtw or -nfa', async () => {
     const { svc, runs } = service();
     await svc.transcribe({ mediaPath: media, options: { model: 'base.en' } }, { jobId: 'o' });
