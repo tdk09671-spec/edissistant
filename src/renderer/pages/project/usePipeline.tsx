@@ -16,6 +16,7 @@ import {
   PipelineFailure,
   planningInput,
   timeline,
+  transcriptionNotice,
   transcriptRows,
   unwrap,
 } from '../../lib/pipeline';
@@ -222,12 +223,7 @@ export function usePipeline(
         },
         source: p.source && transcript.duration ? { ...p.source, duration: p.source.duration ?? transcript.duration } : p.source,
       }));
-      const timing = transcript.warnings.find((w) => /couldn't be checked|DTW alignment off/.test(w));
-      setNotice({
-        title: `Transcribed ${rows.length} segments`,
-        message: `${fromCache ? 'Reused the saved transcript of this file (no re-transcription).' : `Language: ${transcript.language} · model ${transcript.engine.model}`}${timing ? ` ${timing}` : ''}`,
-        tone: timing ? 'info' : 'success',
-      });
+      setNotice(transcriptionNotice(transcript, rows, fromCache));
     });
   }, [run, update]);
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adoptSourceTiming, applyUpdates, changesNotRendered, editorMessage, exportProblems, instructionPending, planningInput, timeline, transcriptRows } from '../../../src/renderer/lib/pipeline';
+import { adoptSourceTiming, applyUpdates, changesNotRendered, editorMessage, exportProblems, instructionPending, planningInput, timeline, transcriptionNotice, transcriptRows } from '../../../src/renderer/lib/pipeline';
 import { segmentUpdates } from '../../../src/shared/pipeline/convert';
 import { CreativePlanner } from '../../../src/shared/planning';
 import { toPlanningInputs } from '../../../src/shared/pipeline/convert';
@@ -65,6 +65,36 @@ describe('transcript → sequence rows', () => {
       { text: 'is', start: 1.2, end: 1.5 },
       { text: 'it.', start: 1.5, end: 4.9654 },
     ]);
+  });
+
+  // Windows validation round 2: dropped dialogue and unverified starts used to pass without a word.
+  it('marks rows whose start the audio couldn’t verify and says so; missing speech is a warning', () => {
+    const transcript = {
+      language: 'en',
+      engine: { model: 'small.en' },
+      warnings: [
+        'With DTW alignment, small.en returned no text for speech at 32.0–40.2 s (a known whisper.cpp problem …). This transcript was made without DTW so no dialogue is lost; …',
+        '1 sentence start(s) couldn’t be verified against the audio …',
+      ],
+      coverage: { complete: true, gaps: [], recovered: [] },
+      sentences: [
+        { id: 's1', start: 0.92, end: 2, text: 'Music under this.', words: [{ text: 'Music', start: 0.92, end: 1.3, startUncertain: true }, { text: 'under', start: 1.3, end: 1.6 }, { text: 'this.', start: 1.6, end: 2 }] },
+        { id: 's2', start: 3, end: 4, text: 'Clean.', words: [{ text: 'Clean.', start: 3, end: 4 }] },
+      ],
+    } as unknown as Transcript;
+    const rows = transcriptRows(transcript);
+    expect(rows.map((r) => r.startUncertain)).toEqual([true, undefined]);
+    const notice = transcriptionNotice(transcript, rows, false);
+    expect(notice.tone).toBe('warning');
+    expect(notice.title).toBe('Transcribed 2 segments');
+    expect(notice.message).toMatch(/returned no text for speech at 32\.0–40\.2 s/);
+    expect(notice.message).toMatch(/start of segment 1 couldn’t be verified/);
+
+    const gaps = transcriptionNotice({ ...transcript, warnings: ['Speech at 32.0–40.2 s has no text in the transcript: …'], coverage: { complete: false, gaps: [{ start: 32, end: 40.2 }], recovered: [] } }, rows, false);
+    expect(gaps).toMatchObject({ tone: 'warning', title: 'Transcribed 2 segments, but some speech has no text' });
+
+    const clean = transcriptionNotice({ ...transcript, warnings: [], coverage: { complete: true, gaps: [], recovered: [] } }, rows.map((r) => ({ ...r, startUncertain: undefined })), true);
+    expect(clean).toMatchObject({ tone: 'success', title: 'Transcribed 2 segments' });
   });
 });
 

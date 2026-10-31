@@ -51,6 +51,11 @@ export interface Segment {
   status: SegmentStatus;
   /** Word timing from local transcription (seconds on the source timeline). */
   words?: SegmentWord[];
+  /**
+   * Transcription couldn't verify this row's start against the audio (music or noise under the
+   * speech, an overlapping voice, or no clear onset): a graphic here may start early or late.
+   */
+  startUncertain?: boolean;
   /** The creative plan for this row; set by Suggest visuals and editor decisions. */
   plan?: SegmentPlanInfo;
 }

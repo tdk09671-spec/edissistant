@@ -91,7 +91,12 @@ export default function Workspace() {
   const totalPlanned = segments.reduce((sum, s) => sum + Math.max(0, s.end - s.start), 0);
 
   const patchSegment = useCallback(
-    (id: string, patch: Partial<Segment>) => update((p) => ({ ...p, segments: (p.segments ?? []).map((s) => (s.id === id ? { ...s, ...patch } : s)) })),
+    (id: string, patch: Partial<Segment>) =>
+      update((p) => ({
+        ...p,
+        // A start the editor sets by hand is theirs: the transcription's "not verified" mark goes.
+        segments: (p.segments ?? []).map((s) => (s.id === id ? { ...s, ...patch, ...(patch.start !== undefined ? { startUncertain: undefined } : {}) } : s)),
+      })),
     [update]
   );
 

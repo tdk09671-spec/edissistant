@@ -157,6 +157,17 @@ therefore carries the same commits, and merges cleanly whichever lands first.
 | PR #1 timing | Sentence starts on whisper's segment boundaries (whole seconds, before the pause), so graphics appeared up to ~0.9 s early. | `651a5f1`, `1f606d8`, `89e0e70`, `ab032ef`: starts pinned to a segment boundary are moved to the speech onset measured in the extracted audio, including quiet lead-in consonants. Estimated segments are spread again. The cache key is bumped. `transcript.timing` records how times were made. |
 | PR #4 UI | The missing-font error said "set allowFallback". | `a780a84`: "Install it, or go to Export → Allow a fallback font." |
 
+**Found in the second real Windows validation of `a6fe66f` (whisper.cpp 1.9.5, GPU), fixed in their own branches:**
+
+| Where | Problem | Root cause | Fix (commit) |
+| --- | --- | --- | --- |
+| PR #2 render | Out-points a frame off: 2/8 graphics at 25 fps, 5/8 at 29.97. Start frames were right. | Each clip had `round(duration × fps)` frames while its start was rounded on its own, so the last frame was `round(start·fps) + round(dur·fps) − 1` instead of `round(end·fps) − 1`. | `abefe7a`: `segmentFrames()` snaps start and end to the same grid. The renderer, composition and render cache key use it (engine version 2). Real-FFmpeg test decodes first and last frames at 25, 24000/1001 and 30000/1001. Exports now require the exact frame count (`d412312`). |
+| PR #3 planning + PR #4 Review | An instruction edited in Review on an approved segment, then Approved and Update preview, rendered 0 graphics, kept the old one and said "Preview ready". | The textarea only stored text. "Approved" was already selected, and the plan wasn't stale until the next sync. Then the planner overwrote the plan's instruction and said "transcript changed", the build left the segment out, and the notice still reported success. | `34af943`: the planner keeps the instruction the approved graphic was planned with (`stale.instructionFrom`), and plain approval can't drop it. `d412312`: **Apply instruction** in Review and the Inspector replans and approves that one segment (or says what wasn't understood), and only it re-renders. Preview and Export warn about any change not in the render. UI E2E `review-instruction.spec.ts`. |
+| PR #1 transcription | With DTW, small.en (with `-nfa`) dropped the last 8 s of a 40 s clip, silently. base.en was fine. | whisper.cpp 1.9.5 itself (reproduced with whisper-cli directly). The app never compared the text with the audio. | `1902fc8`: speech in the audio with no words is detected after every run. A DTW run is redone without DTW and kept if it covers more (with a warning), the remaining gaps are transcribed again from just that audio, and anything left is reported (`coverage`). DTW stays opt-in. |
+| PR #1 timing | Normal mode: starts up to 0.92 s early (clean) and 2.03 s (after pauses). With music, the first start stayed 0.92 s early and wasn't counted. | The onset search ended at whisper's first-token end, which is often before the speech. Full-band volume over a music bed looked like speech already in progress, which fell through uncounted. | `1902fc8`: speech-band onsets against the local background, which must persist like speech, with a 2.5–7 kHz lead-in band and a 3 s search. Every start is moved, confirmed, uncertain or unchecked. Uncertain and unchecked starts are flagged on the word, marked ≈ on the row, and named in the notice. |
+| PR #4 UX | Picking a concept that switches the visual mode gave no on-screen note. | | `d412312`: "Visual mode switched" / "Concept switched" notice. |
+| Docs | Motion-graphics files are numbered by graphic, captions by row. | | `d412312`: see the Export step. |
+
 Integration-only change, which stays in this branch: the PR #3 adapter's `alpha` option, which gives
 full-frame graphics a transparent background for graphics-only deliverables.
 
@@ -314,6 +325,21 @@ Run these in PowerShell on Windows 11 with the setup above. Record the results i
    - comment and mark a segment for revision, then change its instruction
    - approve it (twice: the first click shows the new idea), then Update preview
    - the notice should say 1 rendered and the rest reused
+10. **Round 2 re-checks** (the bugs found in the second Windows validation):
+   - **Instruction on an approved segment:** Review → an approved segment → type "Show it as bars."
+     → "Not applied yet" shows. Update preview first: it must end with a warning naming the segment,
+     not "Preview ready". Then Apply instruction → "Instruction applied" → Update preview: 1
+     rendered, the rest reused, and the new graphic is in the preview.
+   - **Out-points:** export Transparent motion graphics at 25 and 29.97. Each MOV's `nb_read_frames`
+     must equal `round(end × fps) − round(start × fps)`. Back-to-back graphics must neither overlap
+     nor leave a gap in Premiere.
+   - **DTW truncation:** transcribe clip A with small.en and DTW (through the bridge, as before). The
+     transcript must be complete, with a warning that DTW was dropped for small.en. Repeat with
+     base.en: complete, DTW times, no warning.
+   - **Normal-mode starts:** clips A, B, C1 and C2 without DTW. Unflagged rows should be within about
+     a frame of the true onset. Rows marked ≈ in the sequence table, and named in the transcription
+     notice, may be off (music, overlap). No row should be early by more than 0.1 s without being
+     marked.
 
 ## Known limitations
 
@@ -325,6 +351,13 @@ Run these in PowerShell on Windows 11 with the setup above. Record the results i
 - Planning is local only. Model planning is wired in the main process but has no UI and hasn't been
   validated.
 - The E2E vertical slice runs on Linux and macOS only, because of the stand-in whisper-cli.
+  `review-instruction.spec.ts` needs no stand-in, so it runs on Windows wherever FFmpeg is installed.
+- Sentence ends aren't refined. Without DTW, a row (and its graphic or caption) can run 0.4–2.6 s
+  into the following pause.
+- Under a music bed, sentence starts are flagged uncertain rather than measured precisely (about
+  ±0.1 s, sometimes more). The detector is energy-based, not a voice model.
+- DTW can still only be turned on through the `transcribe` bridge (`options.dtwAlignment`); there is no
+  setting or UI for it yet.
 - Segment ids are random, and they seed the planner's tie-breaking. The same project always plans
   the same way, but two projects with the same transcript can get different (equally valid) concept
   mixes.

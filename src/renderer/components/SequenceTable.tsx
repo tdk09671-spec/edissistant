@@ -88,7 +88,14 @@ export function SequenceTable({ segments, numbering, fps, selectedId, activeId, 
                   className="timecode -mx-1.5 flex flex-col rounded-[6px] px-1.5 py-1 text-left text-[12.5px] leading-snug hover:bg-surface-4"
                   title="Jump to segment"
                 >
-                  <span className="text-ink">{formatTimecode(segment.start, fps)}</span>
+                  <span className="text-ink">
+                    {segment.startUncertain && (
+                      <span data-testid="start-uncertain" className="mr-0.5 text-warning" title="Start not verified against the audio (music, overlapping voices or no clear onset): a graphic here may start early or late.">
+                        ≈
+                      </span>
+                    )}
+                    {formatTimecode(segment.start, fps)}
+                  </span>
                   <span className="text-ink-3">{formatTimecode(segment.end, fps)}</span>
                 </button>
               </td>

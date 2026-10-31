@@ -100,8 +100,30 @@ export function transcriptRows(transcript: Transcript): Segment[] {
       createSegment(roundTime(s.start), roundTime(Math.max(s.start, s.end)), {
         transcript: s.text.trim(),
         words: s.words.map((w) => ({ text: w.text.trim(), start: w.start, end: w.end })).filter((w) => w.text),
+        ...(s.words[0]?.startUncertain ? { startUncertain: true } : {}),
       })
     );
+}
+
+/**
+ * What the editor needs to hear after transcribing: missing or recovered speech, a DTW fallback,
+ * and which rows' starts couldn't be verified (Windows validation round 2: dropped dialogue and
+ * unverified starts used to pass without a word).
+ */
+export function transcriptionNotice(transcript: Transcript, rows: Segment[], fromCache: boolean): { title: string; message: string; tone: 'success' | 'warning' } {
+  const base = fromCache ? 'Reused the saved transcript of this file (no re-transcription).' : `Language: ${transcript.language} · model ${transcript.engine.model}.`;
+  const serious = transcript.warnings.filter((w) => /returned no text|skipped speech|has no text in the transcript|DTW alignment off|couldn’t be read back/.test(w));
+  const uncertain = rows.flatMap((r, i) => (r.startUncertain ? [i + 1] : []));
+  const parts = [base, ...serious];
+  if (uncertain.length) {
+    parts.push(`The start of segment${uncertain.length > 1 ? 's' : ''} ${uncertain.join(', ')} couldn’t be verified against the audio (marked ≈): graphics there may start early or late.`);
+  }
+  const incomplete = transcript.coverage?.complete === false;
+  return {
+    title: incomplete ? `Transcribed ${rows.length} segments, but some speech has no text` : `Transcribed ${rows.length} segments`,
+    message: parts.join(' '),
+    tone: incomplete || serious.length || uncertain.length ? 'warning' : 'success',
+  };
 }
 
 /** The timeline a render uses: export resolution and frame rate, source duration. */
