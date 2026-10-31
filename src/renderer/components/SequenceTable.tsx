@@ -47,7 +47,10 @@ export function SequenceTable({ segments, numbering, fps, selectedId, activeId, 
         {segments.map((segment) => {
           const selected = segment.id === selectedId;
           const active = segment.id === activeId;
-          const mode = visualModeInfo(segment.visualMode);
+          // Until the editor approves it, a planned row shows the suggested mode (marked as such).
+          const suggested = Boolean(segment.plan) && segment.status !== 'approved';
+          const mode = visualModeInfo(segment.plan && suggested ? segment.plan.mode : segment.visualMode);
+          const plan = segment.plan;
           const status = segmentStatusInfo(segment.status);
           return (
             <tr
@@ -85,8 +88,27 @@ export function SequenceTable({ segments, numbering, fps, selectedId, activeId, 
                   className="timecode -mx-1.5 flex flex-col rounded-[6px] px-1.5 py-1 text-left text-[12.5px] leading-snug hover:bg-surface-4"
                   title="Jump to segment"
                 >
-                  <span className="text-ink">{formatTimecode(segment.start, fps)}</span>
-                  <span className="text-ink-3">{formatTimecode(segment.end, fps)}</span>
+                  <span className="text-ink">
+                    {segment.startUncertain && (
+                      <span data-testid="start-uncertain" className="mr-0.5 text-warning" title="Start not verified against the audio (music, overlapping voices or no clear onset): a graphic here may start early or late.">
+                        ≈
+                      </span>
+                    )}
+                    {formatTimecode(segment.start, fps)}
+                  </span>
+                  <span className="text-ink-3">
+                    {segment.endUncertain && (
+                      <span data-testid="end-uncertain" className="mr-0.5 text-warning" title="End not verified against the audio: the speech may stop earlier, and a graphic here may run into the pause.">
+                        ≈
+                      </span>
+                    )}
+                    {formatTimecode(segment.end, fps)}
+                  </span>
+                  {segment.visualTiming && (
+                    <span data-testid="visual-adjusted" className="mt-0.5 text-[11px] text-warning" title={`Graphic shown ${formatTimecode(segment.visualTiming.start, fps)} → ${formatTimecode(segment.visualTiming.end, fps)} (adjusted by the editor)`}>
+                      Graphic adjusted
+                    </span>
+                  )}
                 </button>
               </td>
               <td className="border-b border-line px-3 py-3.5">
@@ -95,10 +117,11 @@ export function SequenceTable({ segments, numbering, fps, selectedId, activeId, 
                 </p>
               </td>
               <td className="border-b border-line px-3 py-3.5">
-                <span className="inline-flex items-center gap-2 text-[13px] whitespace-nowrap text-ink-2">
-                  <span className="size-2 shrink-0 rounded-full" style={{ background: mode.color }} />
+                <span className={cn('inline-flex items-center gap-2 text-[13px] whitespace-nowrap', suggested ? 'text-ink-3' : 'text-ink-2')}>
+                  <span className="size-2 shrink-0 rounded-full" style={{ background: mode.color, opacity: suggested ? 0.55 : 1 }} />
                   {mode.label}
                 </span>
+                {suggested && <span className="mt-0.5 block text-[11.5px] text-ink-4">suggested</span>}
               </td>
               <td className="border-b border-line px-3 py-3.5">
                 <p className={cn('line-clamp-2 leading-relaxed', segment.instruction ? 'text-ink' : 'text-ink-4')}>
@@ -106,9 +129,18 @@ export function SequenceTable({ segments, numbering, fps, selectedId, activeId, 
                 </p>
               </td>
               <td className="border-b border-line px-3 py-3.5">
-                <p className={cn('line-clamp-2 leading-relaxed', segment.aiSuggestion ? 'text-ink-2' : 'text-ink-4 italic')}>
-                  {segment.aiSuggestion || 'Awaiting AI planning'}
-                </p>
+                {plan ? (
+                  <div className="flex flex-col gap-0.5" data-testid="row-suggestion">
+                    <p className="truncate font-medium text-ink">{plan.conceptLabel}</p>
+                    <p className="line-clamp-2 text-[12.5px] leading-relaxed text-ink-3">
+                      {plan.stale ? 'Changed after approval: review it' : !plan.renderable ? plan.unsupportedReason : plan.reasoning}
+                    </p>
+                  </div>
+                ) : (
+                  <p className={cn('line-clamp-2 leading-relaxed', segment.aiSuggestion ? 'text-ink-2' : 'text-ink-4 italic')}>
+                    {segment.aiSuggestion || 'Not planned yet'}
+                  </p>
+                )}
               </td>
               <td className="border-b border-line px-3 py-3">
                 <Badge tone={status.tone} dot>

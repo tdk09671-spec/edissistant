@@ -40,6 +40,42 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFolder: (folderPath: string) => ipcRenderer.invoke('shell:openFolder', folderPath),
   showItemInFolder: (filePath: string) => ipcRenderer.invoke('shell:showItem', filePath),
 
+  // Local transcription
+  getTranscriptionStatus: () => ipcRenderer.invoke('transcription:status'),
+  transcribe: (jobId: string, request: unknown) => ipcRenderer.invoke('transcription:transcribe', jobId, request),
+  cancelTranscription: (jobId: string) => ipcRenderer.invoke('transcription:cancel', jobId),
+  getCachedTranscript: (request: unknown) => ipcRenderer.invoke('transcription:getCached', request),
+  clearTranscriptCache: () => ipcRenderer.invoke('transcription:clearCache'),
+  onTranscriptionProgress: (callback: (progress: unknown) => void) => {
+    const listener = (_event: unknown, progress: unknown) => callback(progress);
+    ipcRenderer.on('transcription:progress', listener);
+    return () => {
+      ipcRenderer.removeListener('transcription:progress', listener);
+    };
+  },
+
   // App
   getAppInfo: () => ipcRenderer.invoke('app:info'),
+
+  // End-to-end pipeline: planning, sequence building, media checks
+  probeSource: (mediaPath: string) => ipcRenderer.invoke('pipeline:probeSource', mediaPath),
+  planProject: (request: unknown) => ipcRenderer.invoke('pipeline:plan', request),
+  planAction: (request: unknown) => ipcRenderer.invoke('pipeline:act', request),
+  buildSequence: (request: unknown) => ipcRenderer.invoke('pipeline:build', request),
+  checkMedia: (mediaPath: string) => ipcRenderer.invoke('pipeline:checkMedia', mediaPath),
+
+  // Animation rendering (FFmpeg + sandboxed engine)
+  getRenderStatus: () => ipcRenderer.invoke('render:status'),
+  renderSegment: (jobId: string, spec: unknown, options?: unknown) => ipcRenderer.invoke('render:segment', jobId, spec, options),
+  renderSequence: (jobId: string, sequence: unknown, options?: unknown) => ipcRenderer.invoke('render:sequence', jobId, sequence, options),
+  cancelRender: (jobId: string) => ipcRenderer.invoke('render:cancel', jobId),
+  exportRender: (sourcePath: string, destinationDir: string, fileName: string) => ipcRenderer.invoke('render:export', sourcePath, destinationDir, fileName),
+  clearRenderCache: () => ipcRenderer.invoke('render:clearCache'),
+  onRenderProgress: (callback: (progress: unknown) => void) => {
+    const listener = (_event: unknown, progress: unknown) => callback(progress);
+    ipcRenderer.on('render:progress', listener);
+    return () => {
+      ipcRenderer.removeListener('render:progress', listener);
+    };
+  },
 });

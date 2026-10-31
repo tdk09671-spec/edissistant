@@ -29,6 +29,7 @@ import {
   IconInfo,
   IconKey,
   IconLock,
+  IconMic,
   IconSliders,
 } from '../components/ui/icons';
 import type { AppInfo, AppSettings, SecretStatus } from '../types';
@@ -38,6 +39,7 @@ const sections = [
   { id: 'claude', label: 'Claude API', icon: IconKey },
   { id: 'local-ai', label: 'Local AI', icon: IconCpu },
   { id: 'media', label: 'Media & rendering', icon: IconFilm },
+  { id: 'transcription', label: 'Transcription', icon: IconMic },
   { id: 'storage', label: 'Storage', icon: IconHardDrive },
   { id: 'performance', label: 'Performance', icon: IconBolt },
   { id: 'about', label: 'About', icon: IconInfo },
@@ -340,6 +342,21 @@ export default function Settings() {
                   </div>
                 </Field>
               </div>
+            </Section>
+
+            <Section id="transcription" title="Transcription" description="Local whisper.cpp transcription. These options apply to the next Transcribe.">
+              <SettingRow
+                title="Precise word timing (DTW, advanced)"
+                description="Aligns each word with whisper.cpp’s DTW for tighter sentence starts. Off by default while it is being validated. It is slower, works only with standard models (tiny to large), and some models drop speech with it (small.en on whisper.cpp 1.9.5). When that happens the app transcribes again without DTW so no dialogue is lost, which takes about twice as long, and says so. The transcript always shows which timing it used."
+                htmlFor="s-dtw"
+              >
+                <Toggle
+                  id="s-dtw"
+                  label="Precise word timing (DTW)"
+                  checked={settings.transcription?.dtwAlignment === true}
+                  onChange={(dtwAlignment) => saveSettings((s) => ({ ...s, transcription: { ...(s.transcription ?? {}), dtwAlignment } }))}
+                />
+              </SettingRow>
             </Section>
 
             <Section id="storage" title="Storage">

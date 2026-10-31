@@ -3,7 +3,9 @@ import { v4 as uuid } from 'uuid';
 import { useProject } from '../ProjectEditor';
 import { VideoPlayerShell, type PlayerHandle } from '../../components/VideoPlayerShell';
 import { CommentPanel } from '../../components/CommentPanel';
+import { PipelineStatus } from '../../components/PipelineStatus';
 import { getSegments, mediaUrl, segmentAt } from '../../lib/project';
+import { instructionPending } from '../../lib/pipeline';
 import { segmentStatuses, segmentStatusInfo, visualModeInfo } from '../../lib/catalog';
 import { formatDateTime, formatTimecode } from '../../lib/time';
 import {
@@ -18,17 +20,28 @@ import {
   SegmentedControl,
   Textarea,
   Tooltip,
-  UnavailableBadge,
   cn,
   useToast,
 } from '../../components/ui';
-import { IconFilm, IconHistory, IconRefresh, IconSave, IconTrash } from '../../components/ui/icons';
+import { IconFilm, IconHistory, IconPlay, IconRefresh, IconSave, IconTrash } from '../../components/ui/icons';
 import type { ProjectVersion, ReviewComment, SegmentStatus } from '../../types';
 
 type PanelTab = 'comments' | 'versions';
 
 export default function Review() {
-  const { project, update, fps, selectedSegmentId, setSelectedSegmentId } = useProject();
+  const { project, update, fps, selectedSegmentId, setSelectedSegmentId, pipeline } = useProject();
+  const [view, setView] = useState<'source' | 'preview'>('preview');
+  const [previewExists, setPreviewExists] = useState(false);
+  const previewPath = project.render?.previewPath;
+  useEffect(() => {
+    if (!previewPath || !window.electronAPI) {
+      setPreviewExists(false);
+      return;
+    }
+    window.electronAPI.fileExists(previewPath).then(setPreviewExists);
+  }, [previewPath]);
+  const showingPreview = view === 'preview' && previewExists && Boolean(previewPath);
+  const busy = Boolean(pipeline.job);
   const toast = useToast();
   const playerRef = useRef<PlayerHandle>(null);
   const [playhead, setPlayhead] = useState(0);
@@ -73,18 +86,19 @@ export default function Review() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const setStatus = (id: string, status: SegmentStatus) =>
-    update((p) => ({ ...p, segments: (p.segments ?? []).map((s) => (s.id === id ? { ...s, status } : s)) }));
+  const setStatus = (id: string, status: SegmentStatus) => {
+    const segment = segments.find((s) => s.id === id);
+    if (segment) void pipeline.setStatus(segment, status);
+  };
+  const approvedGraphics = segments.filter((s) => s.status === 'approved' && s.plan).length;
 
   const addComment = (text: string, markForRevision: boolean) => {
     const time = playerRef.current?.getTime() ?? playhead;
     const seg = segmentAt(segments, time) ?? null;
     const comment: ReviewComment = { id: uuid(), time, segmentId: seg?.id ?? null, text, resolved: false, createdAt: new Date().toISOString() };
-    update((p) => ({
-      ...p,
-      comments: [...(p.comments ?? []), comment],
-      segments: markForRevision && seg ? (p.segments ?? []).map((s) => (s.id === seg.id ? { ...s, status: 'needs-revision' } : s)) : p.segments,
-    }));
+    update((p) => ({ ...p, comments: [...(p.comments ?? []), comment] }));
+    // A planned segment goes back to the planner's review queue; an unplanned one just changes status.
+    if (markForRevision && seg) void pipeline.setStatus(seg, 'needs-revision');
   };
 
   const saveVersion = () => {
@@ -131,11 +145,25 @@ export default function Review() {
     <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)_minmax(340px,380px)] gap-4 p-4 xl:p-5 2xl:grid-cols-[minmax(0,1fr)_420px]">
       {/* Player column */}
       <div className="flex min-h-0 flex-col gap-4">
-        <div className="min-h-[240px] flex-1">
+        <div className="relative min-h-[240px] flex-1">
+          {previewExists && (
+            <div className="absolute top-3 left-3 z-10">
+              <SegmentedControl<'source' | 'preview'>
+                label="Viewer"
+                size="sm"
+                value={showingPreview ? 'preview' : 'source'}
+                onChange={setView}
+                options={[
+                  { value: 'source', label: 'Source' },
+                  { value: 'preview', label: 'Rendered preview' },
+                ]}
+              />
+            </div>
+          )}
           <VideoPlayerShell
             ref={playerRef}
             size="large"
-            src={mediaUrl(project.source.path)}
+            src={showingPreview ? mediaUrl(previewPath!) : mediaUrl(project.source.path)}
             fps={fps}
             segments={segments}
             comments={comments}
@@ -143,6 +171,8 @@ export default function Review() {
             onTimeChange={setPlayhead}
           />
         </div>
+
+        {(pipeline.job || pipeline.error || pipeline.notice) && <PipelineStatus pipeline={pipeline} className="shrink-0" />}
 
         {/* Segment strip */}
         <div className="shrink-0 rounded-[14px] border border-line bg-surface-1 p-4">
@@ -208,9 +238,33 @@ export default function Review() {
                     {visualModeInfo(focused.visualMode).label}
                   </span>
                 </div>
-                <p className={cn('mt-2 line-clamp-2 text-[13.5px] leading-relaxed', focused.instruction ? 'text-ink-2' : 'text-ink-4')}>
-                  {focused.instruction || 'No editor instruction.'}
-                </p>
+                <Textarea
+                  aria-label="Editor instruction"
+                  rows={2}
+                  className="mt-2"
+                  value={focused.instruction}
+                  onChange={(e) => update((p) => ({ ...p, segments: (p.segments ?? []).map((s) => (s.id === focused.id ? { ...s, instruction: e.target.value } : s)) }))}
+                  placeholder="Revision instruction, e.g. make it a list, slower"
+                />
+                {focused.plan && instructionPending(focused, focused.plan) ? (
+                  <div data-testid="instruction-pending" className="mt-2 flex flex-wrap items-center gap-2 text-[12.5px] text-warning">
+                    <span>
+                      {focused.instruction.trim()
+                        ? `Not applied yet: the ${focused.plan.conceptLabel} graphic doesn’t follow this instruction.`
+                        : `The instruction was removed; the ${focused.plan.conceptLabel} graphic still follows “${focused.plan.plannedInstruction}”.`}
+                    </span>
+                    <Button size="sm" variant="primary" disabled={busy} onClick={() => setStatus(focused.id, 'approved')}>
+                      {focused.instruction.trim() ? 'Apply instruction' : 'Keep current graphic'}
+                    </Button>
+                  </div>
+                ) : (
+                  focused.plan && (
+                    <p className="mt-2 text-[12.5px] text-ink-3">
+                      Plan: <span className="text-ink-2">{focused.plan.conceptLabel}</span>
+                      {focused.plan.stale ? ' · changed after approval' : ''}
+                    </p>
+                  )
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <SegmentedControl<SegmentStatus>
@@ -220,13 +274,28 @@ export default function Review() {
                   onChange={(status) => setStatus(focused.id, status)}
                   options={segmentStatuses.map((s) => ({ value: s.value, label: s.label }))}
                 />
-                <Tooltip content="Re-rendering a segment needs the render engine, which isn’t part of this build yet.">
-                  <span tabIndex={0}>
-                    <Button size="sm" variant="secondary" icon={<IconRefresh size={15} />} disabled>
+                <Tooltip content="Ask the planner for a different idea for this segment">
+                  <span tabIndex={focused.plan ? -1 : 0}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={<IconRefresh size={15} />}
+                      disabled={!focused.plan || busy}
+                      onClick={async () => {
+                        const status = focused.plan?.planStatus;
+                        if (status !== 'rejected' && status !== 'needs-regeneration') {
+                          await pipeline.act(focused.id, { type: 'request-regeneration', reason: 'Regenerate from review' });
+                        }
+                        await pipeline.suggest();
+                      }}
+                    >
                       Regenerate
                     </Button>
                   </span>
                 </Tooltip>
+                <Button size="sm" variant="primary" icon={<IconPlay size={15} />} disabled={!approvedGraphics || busy} onClick={() => void pipeline.renderPreview()}>
+                  Update preview
+                </Button>
               </div>
             </div>
           )}
@@ -310,8 +379,10 @@ export default function Review() {
                 )}
               </div>
               <div className="flex shrink-0 items-center justify-between gap-3 border-t border-line px-4 py-3">
-                <span className="text-[12.5px] text-ink-3">Rendered previews</span>
-                <UnavailableBadge />
+                <span className="text-[12.5px] text-ink-3">Rendered preview</span>
+                <span className="text-[12.5px] text-ink-2">
+                  {project.render ? `${formatDateTime(project.render.renderedAt)} · ${project.render.rendered.length} rendered, ${project.render.reused.length} reused` : 'None yet'}
+                </span>
               </div>
             </div>
           )}

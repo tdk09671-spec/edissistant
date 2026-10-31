@@ -1,0 +1,9 @@
+[
+  { "id": "b1", "start": 0.0, "end": 3.0, "text": "Most teams lose a day every week to revisions." },
+  { "id": "b2", "start": 3.2, "end": 7.4, "text": "In our survey, 62% of editors said feedback arrives too late." },
+  { "id": "b3", "start": 7.6, "end": 11.8, "text": "So we changed the process: record, review, approve, and render." },
+  { "id": "b4", "start": 12.0, "end": 15.0, "text": "What would you do with that time back?" },
+  { "id": "b5", "start": 15.2, "end": 19.0, "text": "Teams using Northwind cut revision rounds from 6 to 2." },
+  { "id": "b6", "start": 19.2, "end": 22.0, "text": "\"It felt like having a second editor,\" one producer told us." },
+  { "id": "b7", "start": 22.2, "end": 26.0, "text": "Subscribe for the full case study next week." }
+]

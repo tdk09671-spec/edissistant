@@ -1,0 +1,22 @@
+{
+  "schema": "edissistant.planning-config",
+  "version": 1,
+  "models": {
+    "creative-planning": "claude-opus-5-5",
+    "implementation": "claude-opus-5-5"
+  },
+  "effort": {
+    "creative-planning": "medium",
+    "implementation": "low"
+  },
+  "maxSegmentsPerBatch": 12,
+  "maxOutputTokens": 12000,
+  "timeoutMs": 90000,
+  "retry": { "maxAttempts": 3, "baseDelayMs": 1000, "maxDelayMs": 20000 },
+  "refusalFallback": true,
+  "fallbackToLocal": true,
+  "budget": { "softLimit": 0.5, "hardLimit": 2, "warnAt": [0.5, 0.8, 1], "targetPerVideo": 0.1 },
+  "projectBudgets": {
+    "first-real-api-test": { "hardLimit": 0.25 }
+  }
+}

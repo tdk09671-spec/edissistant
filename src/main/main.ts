@@ -2,7 +2,10 @@ import { app, BrowserWindow, ipcMain, session, protocol, dialog, shell, safeStor
 import * as path from 'path';
 import * as fs from 'fs';
 import { Readable } from 'stream';
+import { registerRenderEngine } from './render';
 import { migrateLegacyFolder } from './migration';
+import { registerPipeline } from './pipeline';
+import { registerTranscriptionIpc, TranscriptionService, type ServiceSettings } from './transcription';
 
 // Dev mode (Vite dev server) is opt-in via --dev so `npm start` runs the built renderer.
 const isDev = !app.isPackaged && process.argv.includes('--dev');
@@ -329,6 +332,32 @@ ipcMain.handle('app:info', () => ({
   hardwareAcceleration: startupSettings.hardwareAcceleration !== false,
 }));
 
+// --- Local transcription (FFmpeg + whisper.cpp, runs entirely on this machine) ---
+
+const transcription = new TranscriptionService({
+  userDataPath: app.getPath('userData'),
+  getSettings: () => (readJsonFile(getUserDataPath(SETTINGS_FILE)) || {}) as ServiceSettings,
+});
+registerTranscriptionIpc(ipcMain, transcription);
+// Hold the quit until cancelled jobs have killed their processes and deleted their temp audio
+// (otherwise the WAV, ~115 MB per hour of media, is left in %TEMP%). Give up after 5 s.
+let transcriptionStopped = false;
+app.on('before-quit', (event) => {
+  if (transcriptionStopped || !transcription.hasActiveJobs) return;
+  event.preventDefault();
+  transcriptionStopped = true;
+  const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000));
+  void Promise.race([transcription.cancelAll(), timeout]).finally(() => app.quit());
+});
+
+// --- Creative planning + sequence building (deterministic local planner; Claude only on request) ---
+
+registerPipeline(ipcMain, {
+  userDataPath: app.getPath('userData'),
+  readSettings: () => (readJsonFile(getUserDataPath(SETTINGS_FILE)) || {}) as { ffmpegPath?: string },
+  getApiKey: async () => (await readSecrets()).claudeApiKey ?? null,
+});
+
 // --- Local media protocol ---
 
 function registerMediaProtocol(): void {
@@ -376,6 +405,11 @@ function registerMediaProtocol(): void {
 app.whenReady().then(async () => {
   await migratePlaintextSecrets().catch(() => undefined);
   registerMediaProtocol();
+  registerRenderEngine({
+    userDataPath: app.getPath('userData'),
+    readSettings: () => (readJsonFile(getUserDataPath(SETTINGS_FILE)) || {}) as { ffmpegPath?: string },
+    isDev,
+  });
 
   // Set CSP headers
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

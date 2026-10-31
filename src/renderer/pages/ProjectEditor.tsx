@@ -7,6 +7,7 @@ import { projectFps } from '../lib/project';
 import { Button, EmptyState, IconButton, LoadingState, Select, Tooltip, cn, useToast } from '../components/ui';
 import { IconArrowLeft, IconCheck, IconEdit, IconFolder, IconRedo, IconSave, IconUndo } from '../components/ui/icons';
 import type { Project, ProjectStatus } from '../types';
+import { usePipeline, type Pipeline } from './project/usePipeline';
 
 export interface ProjectContext {
   project: Project;
@@ -15,6 +16,8 @@ export interface ProjectContext {
   fps: number;
   selectedSegmentId: string | null;
   setSelectedSegmentId: (id: string | null) => void;
+  /** Transcribe → plan → approve → render → export for this project. */
+  pipeline: Pipeline;
 }
 
 export function useProject() {
@@ -28,7 +31,7 @@ export default function ProjectEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const toast = useToast();
-  const { projects, settings, updateProject, loading } = useData();
+  const { projects, presets, settings, updateProject, loading } = useData();
   const stored = projects.find((p) => p.id === id);
 
   const [working, setWorking] = useState<Project | null>(null);
@@ -92,6 +95,8 @@ export default function ProjectEditor() {
     },
     [schedule]
   );
+
+  const pipeline = usePipeline(workingRef, update, presets, settings);
 
   const undo = useCallback(() => {
     const prev = past.current.pop();
@@ -186,6 +191,7 @@ export default function ProjectEditor() {
     fps: projectFps(working, settings),
     selectedSegmentId,
     setSelectedSegmentId,
+    pipeline,
   };
 
   return (
