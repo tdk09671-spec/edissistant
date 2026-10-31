@@ -95,7 +95,9 @@ export default function Workspace() {
       update((p) => ({
         ...p,
         // A start the editor sets by hand is theirs: the transcription's "not verified" mark goes.
-        segments: (p.segments ?? []).map((s) => (s.id === id ? { ...s, ...patch, ...(patch.start !== undefined ? { startUncertain: undefined } : {}) } : s)),
+        segments: (p.segments ?? []).map((s) =>
+          s.id === id ? { ...s, ...patch, ...(patch.start !== undefined ? { startUncertain: undefined } : {}), ...(patch.end !== undefined ? { endUncertain: undefined } : {}) } : s
+        ),
       })),
     [update]
   );

@@ -10,7 +10,7 @@
 //                          timed from the synthesised clips (sentence-level only; PR #1 interpolates words)
 //   whisper-cli            stand-in engine: PR #1's fake-whisper-cli.cjs fed trailer.whisper.json
 //   models/ggml-base.en.bin  placeholder "model" the stand-in accepts
-//   script.json            the sentences: clip start/end and the measured speech onset (speechStart)
+//   script.json            the sentences: clip start/end and the measured speech onset and end (speechStart, speechEnd)
 //
 // The stand-in only replaces the speech-to-text step; FFmpeg audio extraction, sentence grouping
 // and everything downstream run for real. It is POSIX-only (shebang wrapper).
@@ -63,15 +63,18 @@ const clips = SENTENCES.map((text, i) => {
   // flite pads each clip with silence; the speech starts at the first sample above -40 dBFS.
   let lead = 0;
   while (lead < samples && Math.abs(pcm.readInt16LE(lead * 2)) < 328) lead++;
-  return { text, wav, duration: samples / RATE, lead: lead / RATE };
+  // ...and ends after the last sample above -40 dBFS.
+  let last = samples - 1;
+  while (last > lead && Math.abs(pcm.readInt16LE(last * 2)) < 328) last--;
+  return { text, wav, duration: samples / RATE, lead: lead / RATE, voiced: (last + 1) / RATE };
 });
 
 // 2. Concatenate with silences and record each sentence's true start/end.
 let t = LEAD;
 const timed = clips.map((c) => {
   // start/end: the clip (what the stand-in whisper output reports, like whisper's early segment
-  // boundary); speechStart: where the speech actually begins in the audio.
-  const s = { text: c.text, start: Number(t.toFixed(3)), end: Number((t + c.duration).toFixed(3)), speechStart: Number((t + c.lead).toFixed(3)) };
+  // boundary); speechStart/speechEnd: where the speech actually begins and ends in the audio.
+  const s = { text: c.text, start: Number(t.toFixed(3)), end: Number((t + c.duration).toFixed(3)), speechStart: Number((t + c.lead).toFixed(3)), speechEnd: Number((t + c.voiced).toFixed(3)) };
   t += c.duration + GAP;
   return s;
 });

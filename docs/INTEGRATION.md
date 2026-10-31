@@ -168,6 +168,17 @@ therefore carries the same commits, and merges cleanly whichever lands first.
 | PR #4 UX | Picking a concept that switches the visual mode gave no on-screen note. | | `d412312`: "Visual mode switched" / "Concept switched" notice. |
 | Docs | Motion-graphics files are numbered by graphic, captions by row. | | `d412312`: see the Export step. |
 
+**Found in the third real Windows validation of `94b3ddc`, addressed (timing and editor control):**
+
+| Problem | What changed | Commits |
+| --- | --- | --- |
+| Starts 365–772 ms late after pauses, unflagged | These sentences start mid-segment, so they weren't anchored and were never checked. Now every sentence start is checked against the pauses in the audio. | PR #1 `465f538` |
+| First sentence over music ~0.9 s early | Pause detection uses a background that stays steady across a music bed's beats and tolerates short drum and hi-hat hits. Boundaries over music are moved but flagged (about ±0.1 s). | PR #1 `465f538` |
+| Sentence ends never refined (+0.4 to +2.6 s) | Ends are trimmed to where the speech stops (after a final plosive release). They never move more than 0.15 s past whisper's end, so graphics don't grow through pauses. Adjacent and overlapping speech is flagged, not guessed. | PR #1 `465f538` |
+| No editor control over graphic timing | **On-screen graphic** in the Inspector: graphic in/out separate from the speech timing, snapped to exact frames (rational 29.97/23.976), ±1 frame nudges, set from the playhead, checked against the video length. Shows "Adjusted", has Reset to speech timing, persists, and re-renders only that graphic. | `fa68de6` |
+| DTW only reachable programmatically | Settings → Transcription → **Precise word timing (DTW, advanced)**, off by default, with its cost and fallback explained. Each transcript says whether it used DTW, fell back, or DTW wasn't available. | PR #1 `6e06665`; here `b3c7d28` |
+| Export warned about unapplied instructions only afterwards | The Export page warns before exporting, with Go to Review. Start render asks first; an export made anyway is recorded as Outdated. | `e9e8e3f` |
+
 Integration-only change, which stays in this branch: the PR #3 adapter's `alpha` option, which gives
 full-frame graphics a transparent background for graphics-only deliverables.
 
@@ -341,6 +352,23 @@ Run these in PowerShell on Windows 11 with the setup above. Record the results i
      notice, may be off (music, overlap). No row should be early by more than 0.1 s without being
      marked.
 
+11. **Round 3 re-checks** (timing and editor control):
+   - **Boundaries without DTW:** clips A, B, C1 and C2 with base.en and small.en. Unflagged starts
+     and ends should be within about a frame of the truth. Rows marked ≈ (start or end) may be off
+     by about 0.1 s over music, or more where sentences run together. B row 4 ("Honestly…") and A
+     small.en "Subscribe now…" should no longer be late. Ends should no longer hold through the pauses.
+   - **Graphic in/out:** in the Inspector, change a graphic's in/out at 25, 23.976 and 29.97. The
+     values snap to frames, the row shows "Graphic adjusted", and Render preview says "Rendered 1".
+     The exported MOV is exactly `round(out × fps) − round(in × fps)` frames, starting at the in
+     frame in its timecode name. Reopen the project: the timing is kept. Reset: the speech timing
+     comes back.
+   - **DTW setting:** Settings → Transcription → Precise word timing. With small.en on clip A, the
+     notice must say DTW lost speech and standard timing was used, and the transcript must be
+     complete. With base.en it must say DTW alignment. With the setting off, the command line has no
+     `-dtw` or `-nfa`.
+   - **Export warning:** with an unapplied instruction, the Export page shows the warning before
+     anything is written. Start render asks first; Export anyway gives an Outdated record.
+
 ## Known limitations
 
 - The whisper path and models folder are set in `settings.json` (as in PR #1); there are no Settings
@@ -352,12 +380,12 @@ Run these in PowerShell on Windows 11 with the setup above. Record the results i
   validated.
 - The E2E vertical slice runs on Linux and macOS only, because of the stand-in whisper-cli.
   `review-instruction.spec.ts` needs no stand-in, so it runs on Windows wherever FFmpeg is installed.
-- Sentence ends aren't refined. Without DTW, a row (and its graphic or caption) can run 0.4–2.6 s
-  into the following pause.
-- Under a music bed, sentence starts are flagged uncertain rather than measured precisely (about
-  ±0.1 s, sometimes more). The detector is energy-based, not a voice model.
-- DTW can still only be turned on through the `transcribe` bridge (`options.dtwAlignment`); there is no
-  setting or UI for it yet.
+- Sentence boundaries come from pauses in the audio, not from a voice model. Over a music bed they
+  are flagged (about ±0.1 s). Where sentences run together or voices overlap there is no pause to
+  measure, so the boundary is left as whisper gave it and flagged. The editor's graphic in/out is the
+  tool for those.
+- DTW is an advanced setting, off by default. It still needs real-world validation on Windows (see
+  round-3 checks).
 - Segment ids are random, and they seed the planner's tie-breaking. The same project always plans
   the same way, but two projects with the same transcript can get different (equally valid) concept
   mixes.

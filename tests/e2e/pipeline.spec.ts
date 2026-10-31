@@ -43,7 +43,7 @@ const VIDEO = path.join(MEDIA, 'trailer.mp4');
 interface Script {
   fps: string;
   duration: number;
-  sentences: { text: string; start: number; end: number; speechStart: number }[];
+  sentences: { text: string; start: number; end: number; speechStart: number; speechEnd: number }[];
 }
 let script: Script;
 
@@ -144,7 +144,10 @@ test('transcribe → plan → approve → render → export → reopen → revis
     // The stand-in whisper output starts each sentence at its clip boundary (like whisper's early
     // segment start); PR #1 moves it to the speech onset measured in the audio.
     expect(Math.abs(s.start - script.sentences[i].speechStart), `start of "${s.transcript}"`).toBeLessThan(0.03);
-    expect(Math.abs(s.end - script.sentences[i].end)).toBeLessThan(0.02);
+    // The stand-in reports each clip's padded end (like whisper's late ends); PR #1 trims it to where
+    // the speech stops (round 3), or flags it. Never later than the clip.
+    if (!s.endUncertain) expect(Math.abs(s.end - script.sentences[i].speechEnd), `end of "${s.transcript}"`).toBeLessThan(0.06);
+    expect(s.end).toBeLessThanOrEqual(script.sentences[i].end + 0.15);
     expect(s.words?.length).toBeGreaterThan(2);
   });
   expect(project(userData)?.transcription).toMatchObject({ language: 'en', model: 'base.en', wordTiming: 'interpolated' });

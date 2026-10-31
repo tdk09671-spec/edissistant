@@ -109,6 +109,7 @@ export function transcriptRows(transcript: Transcript): Segment[] {
         transcript: s.text.trim(),
         words: s.words.map((w) => ({ text: w.text.trim(), start: w.start, end: w.end })).filter((w) => w.text),
         ...(s.words[0]?.startUncertain ? { startUncertain: true } : {}),
+        ...(s.words[s.words.length - 1]?.endUncertain ? { endUncertain: true } : {}),
       })
     );
 }
@@ -138,15 +139,19 @@ export function transcriptionNotice(transcript: Transcript, rows: Segment[], fro
   // The fallback is already explained by the mode line; other engine problems are listed.
   const serious = transcript.warnings.filter((w) => /returned no text|skipped speech|has no text in the transcript|DTW alignment off|DTW alignment isn|couldn’t be read back/.test(w) && !(mode === 'dtw-fallback' && /^With DTW alignment/.test(w)));
   const uncertain = rows.flatMap((r, i) => (r.startUncertain ? [i + 1] : []));
+  const uncertainEnds = rows.flatMap((r, i) => (r.endUncertain ? [i + 1] : []));
   const parts = [base, ...serious];
   if (uncertain.length) {
     parts.push(`The start of segment${uncertain.length > 1 ? 's' : ''} ${uncertain.join(', ')} couldn’t be verified against the audio (marked ≈): graphics there may start early or late.`);
+  }
+  if (uncertainEnds.length) {
+    parts.push(`The end of segment${uncertainEnds.length > 1 ? 's' : ''} ${uncertainEnds.join(', ')} couldn’t be verified (marked ≈): check the graphic out point there, or set it in the Inspector.`);
   }
   const incomplete = transcript.coverage?.complete === false;
   return {
     title: incomplete ? `Transcribed ${rows.length} segments, but some speech has no text` : `Transcribed ${rows.length} segments`,
     message: parts.join(' '),
-    tone: incomplete || serious.length || uncertain.length || mode === 'dtw-fallback' || mode === 'dtw-unavailable' ? 'warning' : 'success',
+    tone: incomplete || serious.length || uncertain.length || uncertainEnds.length || mode === 'dtw-fallback' || mode === 'dtw-unavailable' ? 'warning' : 'success',
   };
 }
 
