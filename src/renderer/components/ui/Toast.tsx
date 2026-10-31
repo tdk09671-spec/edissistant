@@ -39,7 +39,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={value}>
       {children}
       {createPortal(
-        <div aria-live="polite" className="pointer-events-none fixed right-6 bottom-6 z-[300] flex w-[360px] max-w-[calc(100vw-48px)] flex-col gap-2.5">
+        <div aria-live="polite" data-testid="toasts" className="pointer-events-none fixed right-6 bottom-6 z-[300] flex [.modal-open_&]:top-6 [.modal-open_&]:bottom-auto w-[360px] max-w-[calc(100vw-48px)] flex-col gap-2.5">
           {items.map((item) => (
             <div
               key={item.id}
