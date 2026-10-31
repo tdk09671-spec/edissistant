@@ -19,6 +19,8 @@ export interface TranscriptWord {
    * or noise under it, an overlapping voice, or no clear onset). Its time may be early or late.
    */
   startUncertain?: boolean;
+  /** Set on the last word of a sentence whose end couldn't be verified against the audio. */
+  endUncertain?: boolean;
 }
 
 export interface TranscriptSentence {
@@ -103,6 +105,12 @@ export interface TranscriptTiming {
    * and the transcript was made without DTW instead. `dtwEnd` is where the DTW run's text ended.
    */
   dtwFallback?: { reason: 'truncated'; dtwEnd: number };
+  /**
+   * The check of every sentence's start and end against the pauses in the audio (after
+   * grouping): boundaries moved on clear evidence, and boundaries flagged on the words
+   * (`startUncertain` / `endUncertain`) because music, overlap or adjacent speech hides them.
+   */
+  boundaries?: { startsMoved: number; endsTrimmed: number; startsUncertain: number; endsUncertain: number };
 }
 
 /** Whether the transcript has text wherever the audio has speech. */

@@ -234,3 +234,90 @@ export function sceneFromStems(items: { stem: Float32Array; words: string[]; pau
   }
   return { dry, mix, placed };
 }
+
+/** Last time the stem's 1 ms RMS exceeds −45 dBFS (the measured end of a sentence's sound). */
+export function measuredOffset(stem: Float32Array): number {
+  const win = Math.round(0.001 * RATE);
+  const threshold = Math.pow(10, -45 / 20);
+  for (let i = stem.length - win; i >= 0; i -= win) if (rms(stem, i, i + win) > threshold) return (i + win) / RATE;
+  return Number.NaN;
+}
+
+export interface BoundaryScene {
+  mix: Float32Array;
+  /** One per transcript sentence: measured truth and how whisper (simulated) timed it. */
+  sentences: { id: string; words: string[]; truthStart: number; truthEnd: number; start: number; end: number }[];
+}
+
+/**
+ * Sentences shaped like whisper.cpp's output in the Windows round-3 runs, with truth measured on
+ * each dry stem. `parts` lets one transcript sentence hold two stems with a pause inside it ("we
+ * listened … again"). Whisper's times per sentence are given as offsets from the truth:
+ *   startOffset < 0: early (in the pause), > 0: late (a sentence that starts mid-segment)
+ *   endOffset: how far into the following pause (or past the next onset) whisper's end runs
+ */
+export function boundaryScene(
+  items: { parts: Sentence[]; gapInside?: number; pauseBefore: number; overlap?: boolean; startOffset: number; endOffset: number }[],
+  options: { musicDb?: number; firstAt?: number; tail?: number } = {}
+): BoundaryScene {
+  const stems: { stem: Float32Array; at: number }[][] = [];
+  let t = options.firstAt ?? 0.8;
+  const lengthOf = (p: Sentence) => (p.leadIn?.seconds ?? 0) + p.length;
+  const placedAt: { at: number; end: number }[] = [];
+  items.forEach((it, i) => {
+    const total = it.parts.reduce((n, p) => n + lengthOf(p), 0) + (it.gapInside ?? 0) * (it.parts.length - 1);
+    const at = i === 0 ? t : it.overlap ? placedAt[i - 1].end - it.pauseBefore : placedAt[i - 1].end + it.pauseBefore;
+    placedAt.push({ at, end: at + total });
+    t = at + total;
+  });
+  const seconds = Math.max(...placedAt.map((p) => p.end)) + (options.tail ?? 1.2);
+  const n = Math.round(seconds * RATE);
+  const dry = new Float32Array(n);
+  const sentences: BoundaryScene['sentences'] = items.map((it, i) => {
+    const own = new Float32Array(n);
+    let at = placedAt[i].at;
+    it.parts.forEach((p, k) => {
+      addSentence(own, at, p, 31 + i * 13 + k * 5);
+      at += lengthOf(p) + (it.gapInside ?? 0);
+    });
+    for (let k = 0; k < n; k++) dry[k] += own[k];
+    stems.push([]);
+    const truthStart = measuredOnset(own, Math.max(0, placedAt[i].at - 0.05));
+    const truthEnd = measuredOffset(own);
+    return { id: `s${i + 1}`, words: it.parts.flatMap((p) => p.words), truthStart, truthEnd, start: 0, end: 0 };
+  });
+  // Whisper's times, from the truth and the offsets, kept in order and non-overlapping.
+  sentences.forEach((s, i) => {
+    const it = items[i];
+    s.start = Math.max(0, Math.round((s.truthStart + it.startOffset) * 100) / 100);
+    s.end = Math.round((s.truthEnd + it.endOffset) * 100) / 100;
+  });
+  for (let i = 0; i + 1 < sentences.length; i++) if (sentences[i].end > sentences[i + 1].start) sentences[i].end = sentences[i + 1].start;
+  const mix = Float32Array.from(dry);
+  if (options.musicDb !== undefined) {
+    const bed = musicBed(seconds);
+    let sum = 0;
+    let cnt = 0;
+    for (const p of placedAt) for (let k = Math.round(p.at * RATE); k < Math.round(p.end * RATE); k++) {
+      sum += dry[k] * dry[k];
+      cnt++;
+    }
+    const scale = (Math.sqrt(sum / Math.max(1, cnt)) / rms(bed)) * Math.pow(10, options.musicDb / 20);
+    for (let k = 0; k < n; k++) mix[k] += bed[k] * scale;
+  }
+  return { mix, sentences };
+}
+
+/** Transcript sentences for a boundary scene: words spread evenly over whisper's times. */
+export function toTranscriptSentences(scene: BoundaryScene): { id: string; start: number; end: number; text: string; words: { text: string; start: number; end: number }[] }[] {
+  return scene.sentences.map((s) => {
+    const total = s.words.reduce((n, w) => n + w.length, 0);
+    let acc = 0;
+    const words = s.words.map((w) => {
+      const a = s.start + ((s.end - s.start) * acc) / total;
+      acc += w.length;
+      return { text: w, start: Math.round(a * 1000) / 1000, end: Math.round((s.start + ((s.end - s.start) * acc) / total) * 1000) / 1000 };
+    });
+    return { id: s.id, start: s.start, end: s.end, text: s.words.join(' '), words };
+  });
+}

@@ -21,7 +21,7 @@
 // Measured word times are never shifted, and no start moves before the previous word.
 
 import * as fs from 'fs';
-import { interpolateWords, roundTime, type AnchoredStart, type TranscriptWord } from '../../shared/transcription';
+import { interpolateWords, roundTime, type AnchoredStart, type TranscriptSentence, type TranscriptWord } from '../../shared/transcription';
 
 export const FRAME_SECONDS = 0.01;
 
@@ -373,4 +373,227 @@ export function untranscribedSpeech(analysis: SpeechAnalysis, words: readonly Pi
   }
   if (open) gaps.push(open);
   return gaps.filter((g) => g.speech * fs >= minSpeech).map((g) => ({ start: roundTime(g.start * fs), end: roundTime(g.end * fs) }));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sentence boundaries (Windows validation round 3).
+//
+// Whisper's sentence ends sit late in the following pause (median +1.1 s, up to +2.6 s, sometimes
+// past the next sentence's onset), and a sentence that starts in the middle of a whisper segment
+// isn't an anchored start, so it was never checked (+365 to +772 ms late, unflagged). This pass runs
+// after sentences are grouped and works from pauses: runs of at least 150 ms where neither the
+// speech band nor the fricative band rises over the local background.
+//   - A sentence ends where the latest pause covering whisper's end begins. Ends are trimmed, never
+//     pushed more than 0.15 s past whisper's end, so a graphic never grows through a pause.
+//   - Every sentence starts where the pause nearest to its start ends (anchored or not).
+// A boundary is moved only on clear evidence; over music or noise it is moved but flagged; with no
+// pause (adjacent speech, overlapping voices) it is left and flagged. Text, word order and the
+// sentences themselves are never changed, only the first and last words' times (and, when a
+// boundary passes them, the spread of the words in between).
+// ---------------------------------------------------------------------------------------------
+
+const MIN_PAUSE = 15; // frames (150 ms)
+const BLIP = 6; // non-quiet frames tolerated inside a pause (clicks, hi-hats, drum hits: up to 60 ms)
+const LOCAL = 150; // frames (±1.5 s) for the local background
+const END_TAIL = 0.03; // seconds kept after the last voiced frame
+const MAX_END_EXTENSION = 0.15;
+
+/** Sliding minimum of `values` over ±radius (monotonic deque, O(n)). */
+function slidingMin(values: Float32Array, radius: number): Float32Array {
+  const n = values.length;
+  const out = new Float32Array(n);
+  const dq: number[] = [];
+  let head = 0;
+  let right = 0;
+  for (let i = 0; i < n; i++) {
+    const hi = Math.min(n - 1, i + radius);
+    for (; right <= hi; right++) {
+      while (dq.length > head && values[dq[dq.length - 1]] >= values[right]) dq.pop();
+      dq.push(right);
+    }
+    while (dq[head] < i - radius) head++;
+    out[i] = values[dq[head]];
+  }
+  return out;
+}
+
+/** Means of `width` consecutive values starting at each index (the last ones repeat). */
+function runningMean(values: Float32Array, width: number): Float32Array {
+  const n = values.length;
+  const out = new Float32Array(n);
+  if (!n) return out;
+  let sum = 0;
+  for (let i = 0; i < Math.min(width, n); i++) sum += values[i];
+  for (let i = 0; i < n; i++) {
+    const w = Math.min(width, n - i);
+    out[i] = sum / Math.max(1, w);
+    sum -= values[i];
+    if (i + width < n) sum += values[i + width];
+  }
+  return out;
+}
+
+export interface Pause {
+  /** Frames: the first quiet frame and one past the last. */
+  start: number;
+  end: number;
+  /** The background under this pause is music or noise, not silence. */
+  noisy: boolean;
+}
+
+/**
+ * Pauses in the audio. The local background at each frame is the quietest 100 ms within ±1.5 s, but
+ * never below half the quietest 600 ms: under a music bed that keeps the level steady across the
+ * beats instead of dropping into the gap between two drum hits.
+ */
+export function findPauses(a: SpeechAnalysis): Pause[] {
+  return analysePauses(a).pauses;
+}
+
+function analysePauses(a: SpeechAnalysis): { pauses: Pause[]; quiet: (f: number) => boolean } {
+  const { band, fric } = a;
+  const bgOf = (x: Float32Array, floor: number) => {
+    const q100 = slidingMin(runningMean(x, 10), LOCAL);
+    const q600 = slidingMin(runningMean(x, 60), LOCAL);
+    return Float32Array.from(q100, (v, i) => Math.max(v, 0.5 * q600[i], floor, ABS_FLOOR));
+  };
+  const bg = bgOf(band, a.bandFloor);
+  const fbg = bgOf(fric, a.fricFloor);
+  const quiet = (f: number) => band[f] < bg[f] * RISE && fric[f] < fbg[f] * FRIC_RISE;
+  const pauses: Pause[] = [];
+  let start = -1;
+  let blips = 0;
+  let lastQuiet = -1;
+  const close = () => {
+    if (start >= 0 && lastQuiet + 1 - start >= MIN_PAUSE) {
+      let level = 0;
+      for (let k = start; k <= lastQuiet; k++) level = Math.max(level, bg[k]);
+      pauses.push({ start, end: lastQuiet + 1, noisy: level > ABS_FLOOR * 4 });
+    }
+    start = -1;
+    blips = 0;
+  };
+  for (let f = 0; f < band.length; f++) {
+    if (quiet(f)) {
+      if (start < 0) start = f;
+      lastQuiet = f;
+      blips = 0;
+    } else if (start >= 0 && ++blips > BLIP) close();
+  }
+  close();
+  return { pauses, quiet };
+}
+
+export type EndCheck = 'trimmed' | 'confirmed' | 'uncertain';
+
+export interface BoundaryResult {
+  sentences: TranscriptSentence[];
+  /** Sentence starts moved to the end of a clear pause (not counting anchored starts already right). */
+  startsMoved: number;
+  /** Sentence ends moved to the start of a clear pause. */
+  endsTrimmed: number;
+  /** Boundaries moved over music/noise, or with no pause to check them against: flagged. */
+  startsUncertain: number;
+  endsUncertain: number;
+  checks: { id: string; start: StartCheck | 'kept'; end: EndCheck; startReason?: string; endReason?: string }[];
+}
+
+/** Respreads words [from, to] over [start, end], keeping text and order. */
+function respread(words: TranscriptWord[], from: number, to: number, start: number, end: number): void {
+  const spread = interpolateWords(words.slice(from, to + 1).map((w) => w.text), start, end);
+  spread.forEach((x, k) => Object.assign(words[from + k], { start: x.start, end: x.end }));
+}
+
+export function refineSentenceBoundaries(input: readonly TranscriptSentence[], a: SpeechAnalysis, duration: number): BoundaryResult {
+  const fs = a.frameSeconds;
+  const sentences = input.map((s) => ({ ...s, words: s.words.map((w) => ({ ...w })) }));
+  const result: BoundaryResult = { sentences, startsMoved: 0, endsTrimmed: 0, startsUncertain: 0, endsUncertain: 0, checks: [] };
+  if (!a.band.length) return result;
+  const { pauses, quiet } = analysePauses(a);
+  const t = (frame: number) => roundTime(frame * fs);
+  // A final plosive (t, k, p) is a short burst after a silent closure: it sits inside the first
+  // 250 ms of the pause as a blip. The sentence ends after it, not at the closure.
+  const voicedEnd = (p: Pause) => {
+    let end = p.start;
+    for (let f = p.start; f < Math.min(p.end, p.start + 25); f++) if (!quiet(f)) end = f + 1;
+    return end;
+  };
+  const limit = duration > 0 ? duration : a.band.length * fs;
+  const MUSIC = 'music or noise under the speech: accurate to about ±0.1 s';
+
+  sentences.forEach((s, i) => {
+    const words = s.words;
+    if (!words.length) return;
+    const check: BoundaryResult['checks'][number] = { id: s.id, start: 'kept', end: 'confirmed' };
+    const prevEnd = i > 0 ? sentences[i - 1].end : 0;
+    const nextStart = i + 1 < sentences.length ? sentences[i + 1].start : limit;
+    const first = words[0];
+    const last = words[words.length - 1];
+
+    // Start: the end of the pause around it, or the nearest one before it (whisper's late starts),
+    // never before the previous sentence's (already refined) end.
+    const startCandidates = pauses.filter((p) => t(p.end) > prevEnd + 0.02 && t(p.end) <= s.start + 1.0 && t(p.end) >= s.start - 1.5 && t(p.end) < s.end - 0.1);
+    const around = startCandidates.find((p) => t(p.start) <= s.start && t(p.end) >= s.start);
+    const before = startCandidates.filter((p) => t(p.end) <= s.start).sort((x, y) => y.end - x.end)[0];
+    const startPause = around ?? before ?? startCandidates.sort((x, y) => Math.abs(t(x.end) - s.start) - Math.abs(t(y.end) - s.start))[0];
+    if (startPause) {
+      const onset = roundTime(Math.max(prevEnd, t(startPause.end)));
+      if (Math.abs(onset - s.start) >= 0.03) {
+        // Words that would end before the new start are spread again from it.
+        let k = 0;
+        while (k < words.length - 1 && words[k].end < onset + 0.05 * (k + 1)) k++;
+        if (k > 0 || onset > first.end - 0.05) respread(words, 0, k, onset, Math.max(words[k].end, onset + 0.05 * (k + 1)));
+        else first.start = onset;
+        s.start = words[0].start;
+        check.start = startPause.noisy ? 'uncertain' : 'moved';
+        if (startPause.noisy) check.startReason = MUSIC;
+        result.startsMoved += startPause.noisy ? 0 : 1;
+      } else check.start = startPause.noisy ? 'uncertain' : 'confirmed';
+      if (startPause.noisy) words[0].startUncertain = true;
+      else delete words[0].startUncertain; // clear evidence now (e.g. once the previous end is fixed)
+    } else if (i > 0) {
+      // Speech runs on from the previous sentence: nothing to check the start against.
+      words[0].startUncertain = true;
+      check.start = 'uncertain';
+      check.startReason = 'no pause before it (adjacent speech or overlapping voices)';
+    }
+    if (words[0].startUncertain) result.startsUncertain++;
+
+    // End: the start of the latest pause that covers whisper's end (or that ends where the next
+    // sentence's speech begins), at least 0.3 s into the sentence. Never more than 0.15 s later.
+    const endCandidates = pauses
+      .filter((p) => t(p.start) >= s.start + 0.3 && t(p.start) <= s.end + MAX_END_EXTENSION)
+      .filter((p) => t(p.end) >= Math.min(s.end, nextStart) - 0.05 || !pauses.some((q) => q.start >= p.end && t(q.start) < nextStart))
+      .sort((x, y) => y.start - x.start);
+    const endPause = endCandidates[0];
+    if (endPause) {
+      // Later than whisper's end only when the speech clearly runs on past it (by more than 30 ms).
+      const voicedUntil = t(voicedEnd(endPause));
+      const offset = voicedUntil <= s.end + 0.03 && voicedUntil + END_TAIL >= s.end ? s.end : roundTime(Math.min(nextStart, s.end + MAX_END_EXTENSION, voicedUntil + END_TAIL));
+      if (Math.abs(offset - s.end) >= 0.03) {
+        const trimmed = offset < s.end;
+        if (offset < last.start + 0.05) {
+          let k = words.length - 1;
+          while (k > 0 && words[k].start > offset - 0.05 * (words.length - k)) k--;
+          respread(words, k, words.length - 1, Math.min(words[k].start, offset - 0.05 * (words.length - k)), offset);
+        } else last.end = offset;
+        s.end = words[words.length - 1].end;
+        check.end = endPause.noisy ? 'uncertain' : 'trimmed';
+        if (!endPause.noisy && trimmed) result.endsTrimmed++;
+      } else check.end = endPause.noisy ? 'uncertain' : 'confirmed';
+      if (endPause.noisy) {
+        words[words.length - 1].endUncertain = true;
+        check.endReason = MUSIC;
+      }
+    } else {
+      words[words.length - 1].endUncertain = true;
+      check.end = 'uncertain';
+      check.endReason = 'no pause after it (adjacent speech or overlapping voices)';
+    }
+    if (words[words.length - 1].endUncertain) result.endsUncertain++;
+    s.start = words[0].start;
+    s.end = words[words.length - 1].end;
+    result.checks.push(check);
+  });
+  return result;
 }
