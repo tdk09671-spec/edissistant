@@ -78,6 +78,14 @@ describe('speech onsets for anchored sentence starts', () => {
     expect(r.words[2].start).toBe(1.8);
   });
 
+  it('includes a quiet lead-in consonant before the loud vowel', () => {
+    // 80 ms of a quiet "f" (about -30 dB below the vowel) from 3.120 s, then the vowel from 3.200 s.
+    const samples = signal(5, [[3.2, 4.0]]);
+    for (let i = Math.round(3.12 * RATE); i < Math.round(3.2 * RATE); i++) samples[i] += Math.round(300 * Math.sin(i * 1.7) + 150 * Math.sin(i * 2.9));
+    const r = refineAnchoredStarts(words([['First', 2.8, 3.6]]), [{ index: 0, count: 1, estimated: false }], energyEnvelope(samples, RATE));
+    expect(Math.abs(r.words[0].start - 3.12)).toBeLessThanOrEqual(0.01);
+  });
+
   it('keeps at least 50 ms of the word and handles silence-only audio', () => {
     const late = energyEnvelope(signal(3, [[1.48, 2.5]]), RATE);
     const r = refineAnchoredStarts(words([['Hi', 1.0, 1.5]]), [{ index: 0, count: 1, estimated: false }], late);

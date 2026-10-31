@@ -56,13 +56,26 @@ export function energyEnvelope(samples: Int16Array, rate: number, frameSeconds =
   return env;
 }
 
+function levels(env: Float32Array): { noise: number; peak: number } {
+  const sorted = Float32Array.from(env).sort();
+  return { noise: sorted[Math.floor(sorted.length * 0.1)], peak: sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99))] };
+}
+
 /** Level above which a frame counts as speech: well above the noise floor, a share of the peaks. */
 export function speechThreshold(env: Float32Array): number {
   if (env.length === 0) return 1;
-  const sorted = Float32Array.from(env).sort();
-  const noise = sorted[Math.floor(sorted.length * 0.1)];
-  const peak = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99))];
+  const { noise, peak } = levels(env);
   return Math.max(noise * 4, noise + (peak - noise) * 0.06, 0.003);
+}
+
+/**
+ * Lower level used to extend an onset backwards over quiet consonants ("f", "s", "th") that come
+ * before the louder vowel the main threshold catches.
+ */
+export function softThreshold(env: Float32Array): number {
+  if (env.length === 0) return 1;
+  const { noise, peak } = levels(env);
+  return Math.max(noise * 2.5, noise + (peak - noise) * 0.015, 0.0015);
 }
 
 export interface OnsetResult {
@@ -84,6 +97,7 @@ export function refineAnchoredStarts(words: readonly TranscriptWord[], anchored:
   const out = words.map((w) => ({ ...w }));
   if (!anchored.length || env.length === 0) return { words: out, refined: 0, unchecked: anchored.length };
   const thr = speechThreshold(env);
+  const soft = softThreshold(env);
   const speech = (f: number) => f >= 0 && f < env.length && env[f] >= thr && (env[f + 1] ?? 0) >= thr;
   const frameOf = (t: number) => Math.floor(t / frameSeconds + 1e-6);
   let refined = 0;
@@ -106,6 +120,9 @@ export function refineAnchoredStarts(words: readonly TranscriptWord[], anchored:
     } else {
       for (let f = frameOf(w.start); f * frameSeconds <= latest; f++) {
         if (speech(f)) {
+          // Back over a quiet lead-in consonant: at most 250 ms, not before the engine's start.
+          const floor = Math.max(frameOf(w.start), f - Math.round(0.25 / frameSeconds));
+          while (f - 1 >= floor && env[f - 1] >= soft) f--;
           onset = f * frameSeconds;
           break;
         }
