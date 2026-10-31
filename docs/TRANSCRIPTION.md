@@ -159,7 +159,7 @@ default model, and plain-language `problems`) without running anything.
 
 - **The problem.** Without DTW, whisper.cpp pins the first token of each segment to the segment's start timestamp. Whisper usually puts that where the previous segment ended, before the pause, so a sentence could start most of a second before its first word. On Windows that put graphics up to ~0.9 s ahead of the speech.
 - **Which starts are affected.** The parser marks those starts (`anchoredStarts`): the first word of a segment whose time equals the segment start, or every segment's first word when there is no token timing. DTW times are measured onsets and are never marked.
-- **The fix.** The service moves each marked start to the speech onset it measures in the 16 kHz WAV that whisper read. It uses 10 ms RMS frames, with a threshold well above the noise floor.
+- **The fix.** The service moves each marked start to the speech onset it measures in the 16 kHz WAV that whisper read. It uses 10 ms RMS frames, with a threshold well above the noise floor. It then extends back over a quiet lead-in consonant ("f", "s") using a lower threshold, at most 250 ms. When a segment's word times are estimates, the segment's words are spread again from the measured onset.
   - The new start stays inside that word, keeps at least 50 ms of it, and never goes before the previous word.
   - A start already in speech is walked back to where that speech began, at most 0.5 s.
   - No fixed offset is applied. Measured words and every word end are untouched.
