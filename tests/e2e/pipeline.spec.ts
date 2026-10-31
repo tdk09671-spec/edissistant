@@ -175,6 +175,21 @@ test('transcribe → plan → approve → render → export → reopen → revis
     await settle(page);
   }
   await expect.poll(() => project(userData)?.segments?.every((s) => s.status === 'approved')).toBe(true);
+
+  // Windows regression (Bug 1): Captions mode, then "Kinetic headline" from the concept picker, then
+  // approve. This used to make the whole preview fail with INVALID_SPEC.
+  await byText('We talked to 120 editors').click();
+  await page.getByRole('radiogroup', { name: 'Visual mode' }).getByRole('radio', { name: 'Captions' }).click();
+  await settle(page);
+  await expect(page.getByTestId('suggestion-concept')).toHaveText('Emphasis captions');
+  await page.locator('#seg-concept').selectOption({ label: 'Kinetic headline' });
+  await settle(page);
+  await expect(page.getByTestId('suggestion-concept')).toHaveText('Kinetic headline');
+  await expect(page.getByRole('radiogroup', { name: 'Visual mode' }).getByRole('radio', { name: 'Motion graphics' })).toHaveAttribute('aria-checked', 'true');
+  await panel.getByRole('button', { name: 'Approve', exact: true }).click();
+  await settle(page);
+  await expect.poll(() => project(userData)?.segments?.find((s) => s.transcript.startsWith('We talked to 120'))?.plan).toMatchObject({ conceptId: 'kinetic-headline', mode: 'motion-graphics', planStatus: 'approved' });
+  await expect.poll(() => project(userData)?.segments?.every((s) => s.status === 'approved')).toBe(true);
   const approved = project(userData)!.segments!;
   // Approval never touches the transcript, timing or instructions.
   approved.forEach((s) => expect(transcribed.find((t) => t.id === s.id)).toMatchObject({ transcript: s.transcript, start: s.start, end: s.end, instruction: s.instruction }));
@@ -186,6 +201,8 @@ test('transcribe → plan → approve → render → export → reopen → revis
   await expect.poll(() => project(userData)?.render?.previewPath).toBeTruthy();
   const render = project(userData)!.render!;
   const graphics = render.segments.filter((r) => r.status === 'renderable').map((r) => r.segmentId);
+  const edited = approved.find((x) => x.transcript.startsWith('We talked to 120'))!;
+  expect(render.segments.find((r) => r.segmentId === edited.id)).toMatchObject({ status: 'renderable', conceptId: 'kinetic-headline' });
   expect(graphics.length).toBeGreaterThanOrEqual(4);
   expect(render.rendered.sort()).toEqual([...graphics].sort());
   expect(render.reused).toEqual([]);
