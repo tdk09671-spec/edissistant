@@ -23,6 +23,20 @@ export class PipelineFailure extends Error {
   }
 }
 
+/**
+ * Engine messages are written for spec authors ("Bundle it in assets.fonts or set allowFallback").
+ * This turns the ones an editor can act on into an instruction in the app's own terms.
+ */
+export function editorMessage(code: string, message: string): string {
+  if (code === 'FONT_NOT_FOUND') {
+    const family = /Font "([^"]+)" is not installed/.exec(message)?.[1] ?? /font file for "([^"]+)"/.exec(message)?.[1];
+    const what = family ? `The font “${family}” from this client’s preset` : 'A font from this client’s preset';
+    const damaged = /damaged|unsupported/.test(message);
+    return `${what} ${damaged ? 'could not be loaded' : 'is not installed on this computer'}. Install it, or go to Export → Allow a fallback font.`;
+  }
+  return message;
+}
+
 /** Unwraps an IPC result, throwing a PipelineFailure with the engine's code and message. */
 export function unwrap<T>(result: PipelineResult<T>): T {
   if (!result.ok) throw new PipelineFailure(result.error.code, result.error.message);

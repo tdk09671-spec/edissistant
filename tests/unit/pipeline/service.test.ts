@@ -113,3 +113,32 @@ describe('PipelineService', () => {
     expect(svc.planning.store.loadProfile(plain.profile.id)?.revision).toBe(1);
   });
 });
+
+describe('Windows regression: an incompatible concept no longer breaks the whole render', () => {
+  it('the UI sequence that failed on Windows now renders, and other approved segments are unchanged', async () => {
+    const svc = service();
+    await svc.plan(input());
+    await svc.act({ ...input(), segmentId: 'a3', action: { type: 'approve' } });
+    const before = await svc.build(build(input()));
+    // Captions mode for a2, then "Kinetic headline" from the concept picker (as the inspector sends it), then approve.
+    await svc.act({ ...input(), segmentId: 'a2', action: { type: 'edit', overrides: { visualMode: 'captions' } } });
+    const picked = await svc.act({ ...input(), segmentId: 'a2', action: { type: 'edit', overrides: { conceptId: 'kinetic-headline' } } });
+    expect(byId(picked, 'a2').plan).toMatchObject({ conceptId: 'kinetic-headline', mode: 'motion-graphics' });
+    await svc.act({ ...input(), segmentId: 'a2', action: { type: 'approve' } });
+    const after = await svc.build(build(input()));
+    expect(validateSequence(after.sequence)).toMatchObject({ ok: true });
+    expect(after.results.find((r) => r.segmentId === 'a2')).toMatchObject({ status: 'renderable', conceptId: 'kinetic-headline' });
+    // a3's spec is byte-identical, so PR #2 serves it from the render cache.
+    const spec = (b: typeof before, id: string) => b.sequence.segments.find((s) => b.specIds[s.id] === id);
+    expect(spec(after, 'a3')).toEqual(spec(before, 'a3'));
+    expect(byId(picked, 'a3').plan.planStatus).toBe('approved');
+  });
+
+  it('an impossible pair asked for explicitly is refused with the reason', async () => {
+    await service().plan(input());
+    await expect(service().act({ ...input(), segmentId: 'a2', action: { type: 'edit', overrides: { conceptId: 'kinetic-headline', visualMode: 'captions' } } })).rejects.toMatchObject({
+      code: 'INVALID_ACTION',
+      message: expect.stringMatching(/can't be shown in Captions mode/),
+    });
+  });
+});

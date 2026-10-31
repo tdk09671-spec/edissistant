@@ -2,6 +2,7 @@
 // and the animation specs the renderer validates (PR #2). No Electron or Node APIs: unit-tested
 // directly and used by the main-process pipeline service.
 
+import { validateAnimationSpec } from '../animation/validate';
 import { adaptSegment, planToAnimationSpecs, toSequenceSpec, type AdapterResult, type RenderSettings } from '../planning/adapter';
 import { effectiveSegment, segmentInputHash, type EditorAction } from '../planning/approval';
 import { conceptById } from '../planning/concepts';
@@ -170,9 +171,24 @@ export function buildSequence(
 ): BuildOutcome {
   const settings: RenderSettings = { width: options.width, height: options.height, fps: options.fps };
   const allowFontFallback = options.allowFontFallback === true;
-  const results = options.target === 'captions' ? captionResults(inputs, profile, settings, allowFontFallback) : planResults(plan, inputs, profile, settings, allowFontFallback, options.target === 'alpha');
-  const sequence = toSequenceSpec(`${options.projectId}-${options.target}`, results, settings, options.duration);
+  const adapted = options.target === 'captions' ? captionResults(inputs, profile, settings, allowFontFallback) : planResults(plan, inputs, profile, settings, allowFontFallback, options.target === 'alpha');
+  // PR #2 validates a sequence as a whole: one bad segment would stop every graphic from rendering.
+  // Each spec is checked on its own first; a failing one is reported and left out.
+  const rejected = new Map<string, string>();
+  for (const r of adapted) {
+    if (r.status !== 'renderable') continue;
+    const check = validateAnimationSpec(r.spec);
+    if (check.ok) continue;
+    const first = check.issues[0];
+    rejected.set(r.segmentId, `The renderer rejected this graphic (${first.path} ${first.message}${check.issues.length > 1 ? `, +${check.issues.length - 1} more` : ''}). The other graphics still render.`);
+  }
+  const rendered = adapted.filter((r) => !rejected.has(r.segmentId));
+  const sequence = toSequenceSpec(`${options.projectId}-${options.target}`, rendered, settings, options.duration);
   const specIds: Record<string, string> = {};
-  for (const r of results) if (r.status === 'renderable') specIds[r.spec.id] = r.segmentId;
-  return { sequence, results: results.map(summary), specIds };
+  for (const r of rendered) if (r.status === 'renderable') specIds[r.spec.id] = r.segmentId;
+  const summaries = adapted.map((r): SegmentBuildResult => {
+    const reason = rejected.get(r.segmentId);
+    return reason ? { segmentId: r.segmentId, conceptId: r.conceptId, status: 'invalid', reason, warnings: [] } : summary(r);
+  });
+  return { sequence, results: summaries, specIds };
 }

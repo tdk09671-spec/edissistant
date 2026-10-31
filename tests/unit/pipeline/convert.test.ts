@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateAnimationSpec, validateSequence } from '../../../src/shared/animation';
+import { fpsRational, secondsToFrames, validateAnimationSpec, validateSequence } from '../../../src/shared/animation';
 import { adaptSegment, applyEditorAction, CreativePlanner, type ProjectPlan } from '../../../src/shared/planning';
 import { actionForStatus, buildSequence, parseResolution, segmentUpdates, toPlanningInputs, uiStatus, wordsMatchText } from '../../../src/shared/pipeline/convert';
 import type { PipelineSegment } from '../../../src/shared/pipeline/types';
@@ -153,6 +153,42 @@ describe('caption timing regression (found by the end-to-end run)', () => {
       for (const c of cues) {
         expect(c.end).toBeLessThanOrEqual(r.spec.duration);
         for (const w of c.words ?? []) expect(w.end).toBeLessThanOrEqual(c.end);
+      }
+    }
+  });
+});
+
+describe('one bad segment never blocks the others (Windows regression)', () => {
+  it('a spec the renderer would reject is reported as invalid and left out; the rest is a valid sequence', async () => {
+    const plan = approveAll(await planned());
+    // An editor override PR #2 can't accept (not a colour) on one segment only.
+    // Concepts that draw with the accent colour.
+    const target = plan.segments.find((s) => ['counter-hero', 'progress-ring', 'bar-comparison', 'line-trend', 'question-card', 'underline-callout', 'stat-split'].includes(s.suggestion.conceptId))!.segmentId;
+    const broken = { ...plan, segments: plan.segments.map((s) => (s.segmentId === target ? { ...s, overrides: { ...(s.overrides ?? {}), params: { accent: 'not-a-colour' } } } : s)) };
+    const good = buildSequence(plan, toPlanningInputs(rows()), profile(), { projectId: 'p1', width: 1920, height: 1080, fps: 25, duration: 45, target: 'composite' });
+    const built = buildSequence(broken, toPlanningInputs(rows()), profile(), { projectId: 'p1', width: 1920, height: 1080, fps: 25, duration: 45, target: 'composite' });
+    expect(built.results.find((r) => r.segmentId === target)).toMatchObject({ status: 'invalid', reason: expect.stringMatching(/renderer rejected this graphic.*other graphics still render/) });
+    expect(validateSequence(built.sequence)).toMatchObject({ ok: true });
+    expect(built.sequence.segments).toHaveLength(good.sequence.segments.length - 1);
+    for (const s of built.sequence.segments) expect(s).toEqual(good.sequence.segments.find((g) => g.id === s.id));
+  });
+});
+
+describe('fractional sentence starts reach the timeline unchanged (Windows regression)', () => {
+  it('specs keep the exact start; the first frame is the rational frame nearest it at 25, 24000/1001 and 30000/1001', async () => {
+    const starts = [1.237, 2.48, 4.905, 16.166];
+    const fractional: PipelineSegment[] = starts.map((start, i) => ({ id: `f${i}`, start, end: start + 1.9, transcript: ['We talked to 120 editors.', 'Revenue grew 40%.', 'First we listen, then we plan.', 'What would you automate first?'][i], instruction: '' }));
+    const plan = approveAll(await planned(fractional));
+    for (const fps of [25, 23.976, 29.97]) {
+      const { num, den } = fpsRational(fps);
+      const built = buildSequence(plan, toPlanningInputs(fractional), profile(), { projectId: 'p1', width: 1920, height: 1080, fps, duration: 30, target: 'composite' });
+      for (const spec of built.sequence.segments) {
+        const row = fractional.find((r) => r.id === built.specIds[spec.id])!;
+        expect(spec.start).toBe(row.start);
+        const first = secondsToFrames(spec.start, fps);
+        expect(first).toBe(Math.round((row.start * num) / den));
+        // Never more than half a frame from the speech, either way.
+        expect(Math.abs((first * den) / num - row.start)).toBeLessThanOrEqual(den / num / 2 + 1e-9);
       }
     }
   });

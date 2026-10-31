@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { adoptSourceTiming, applyUpdates, exportProblems, planningInput, timeline, transcriptRows } from '../../../src/renderer/lib/pipeline';
+import { adoptSourceTiming, applyUpdates, editorMessage, exportProblems, planningInput, timeline, transcriptRows } from '../../../src/renderer/lib/pipeline';
 import { segmentUpdates } from '../../../src/shared/pipeline/convert';
 import { CreativePlanner } from '../../../src/shared/planning';
 import { toPlanningInputs } from '../../../src/shared/pipeline/convert';
@@ -115,5 +115,16 @@ describe('source timing and export checks', () => {
     expect(exportProblems({ ...good, video: { ...good.video!, frames: 900 } }, expected)[0]).toMatch(/900 frames, expected 1067/);
     expect(exportProblems(good, { ...expected, alpha: true })).toEqual(['Has no alpha channel.']);
     expect(exportProblems({ ...good, video: null }, expected)).toEqual(['The file has no video stream.']);
+  });
+});
+
+describe('editor-facing messages', () => {
+  it('turns the renderer’s missing-font message into an instruction in the app’s terms', () => {
+    expect(editorMessage('FONT_NOT_FOUND', 'Font "Geist" is not installed. Bundle it in assets.fonts or set allowFallback.')).toBe(
+      'The font “Geist” from this client’s preset is not installed on this computer. Install it, or go to Export → Allow a fallback font.'
+    );
+    expect(editorMessage('FONT_NOT_FOUND', 'The font file for "Brand Sans" could not be loaded (damaged or unsupported).')).toMatch(/“Brand Sans”.*could not be loaded\. Install it, or go to Export → Allow a fallback font\./);
+    expect(editorMessage('FONT_NOT_FOUND', 'x')).not.toMatch(/allowFallback/);
+    expect(editorMessage('MEDIA_NOT_FOUND', 'Base video not found')).toBe('Base video not found');
   });
 });

@@ -115,6 +115,8 @@ const BUILD_LABEL: Record<SegmentBuildResult['status'], string> = {
   'missing-data': 'Missing data',
   'missing-assets': 'Missing assets',
   'not-approved': 'Not rendered',
+  incompatible: 'Concept and mode don’t fit',
+  invalid: 'Rejected by the renderer',
 };
 
 /** The creative plan for one row, with the editor's decisions. */

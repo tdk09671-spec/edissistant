@@ -42,7 +42,7 @@ const VIDEO = path.join(MEDIA, 'trailer.mp4');
 interface Script {
   fps: string;
   duration: number;
-  sentences: { text: string; start: number; end: number }[];
+  sentences: { text: string; start: number; end: number; speechStart: number }[];
 }
 let script: Script;
 
@@ -140,7 +140,9 @@ test('transcribe → plan → approve → render → export → reopen → revis
   const transcribed = [...project(userData)!.segments!].sort((a, b) => a.start - b.start);
   transcribed.forEach((s, i) => {
     expect(s.transcript).toBe(script.sentences[i].text);
-    expect(Math.abs(s.start - script.sentences[i].start)).toBeLessThan(0.02);
+    // The stand-in whisper output starts each sentence at its clip boundary (like whisper's early
+    // segment start); PR #1 moves it to the speech onset measured in the audio.
+    expect(Math.abs(s.start - script.sentences[i].speechStart), `start of "${s.transcript}"`).toBeLessThan(0.03);
     expect(Math.abs(s.end - script.sentences[i].end)).toBeLessThan(0.02);
     expect(s.words?.length).toBeGreaterThan(2);
   });

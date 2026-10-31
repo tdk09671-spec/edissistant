@@ -114,7 +114,8 @@ export interface BuildRequest extends ProjectPlanningInput {
 export interface SegmentBuildResult {
   segmentId: string;
   conceptId: string;
-  status: AdapterResult['status'];
+  /** 'invalid': the spec failed PR #2's validator and was left out so the rest still renders. */
+  status: AdapterResult['status'] | 'invalid';
   reason?: string;
   warnings: string[];
 }

@@ -10,7 +10,7 @@
 //                          timed from the synthesised clips (sentence-level only; PR #1 interpolates words)
 //   whisper-cli            stand-in engine: PR #1's fake-whisper-cli.cjs fed trailer.whisper.json
 //   models/ggml-base.en.bin  placeholder "model" the stand-in accepts
-//   script.json            the sentences with their true start/end times
+//   script.json            the sentences: clip start/end and the measured speech onset (speechStart)
 //
 // The stand-in only replaces the speech-to-text step; FFmpeg audio extraction, sentence grouping
 // and everything downstream run for real. It is POSIX-only (shebang wrapper).
@@ -55,14 +55,23 @@ const clips = SENTENCES.map((text, i) => {
   const wav = path.join(work, `s${i}.wav`);
   fs.writeFileSync(txt, text);
   run(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `flite=textfile='${filterPath(txt)}':voice=slt`, '-ar', String(RATE), '-ac', '1', '-c:a', 'pcm_s16le', wav]);
-  const samples = (fs.statSync(wav).size - 44) / 2;
-  return { text, wav, duration: samples / RATE };
+  const file = fs.readFileSync(wav);
+  let pos = 12;
+  while (file.toString('ascii', pos, pos + 4) !== 'data') pos += 8 + file.readUInt32LE(pos + 4);
+  const pcm = file.subarray(pos + 8, pos + 8 + file.readUInt32LE(pos + 4));
+  const samples = pcm.length / 2;
+  // flite pads each clip with silence; the speech starts at the first sample above -40 dBFS.
+  let lead = 0;
+  while (lead < samples && Math.abs(pcm.readInt16LE(lead * 2)) < 328) lead++;
+  return { text, wav, duration: samples / RATE, lead: lead / RATE };
 });
 
 // 2. Concatenate with silences and record each sentence's true start/end.
 let t = LEAD;
 const timed = clips.map((c) => {
-  const s = { text: c.text, start: Number(t.toFixed(3)), end: Number((t + c.duration).toFixed(3)) };
+  // start/end: the clip (what the stand-in whisper output reports, like whisper's early segment
+  // boundary); speechStart: where the speech actually begins in the audio.
+  const s = { text: c.text, start: Number(t.toFixed(3)), end: Number((t + c.duration).toFixed(3)), speechStart: Number((t + c.lead).toFixed(3)) };
   t += c.duration + GAP;
   return s;
 });

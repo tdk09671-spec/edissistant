@@ -7,6 +7,7 @@ import { getSegments } from '../../lib/project';
 import {
   actionForStatus,
   adoptSourceTiming,
+  editorMessage,
   applyUpdates,
   exportProblems,
   fileTimecode,
@@ -73,7 +74,7 @@ const TITLES: Record<JobKind, string> = {
 
 function describe(error: unknown): PipelineError {
   if (error instanceof TranscriptionError || error instanceof RenderError || error instanceof PipelineFailure) {
-    return { title: titleFor(error.code), message: error.message, code: error.code };
+    return { title: titleFor(error.code), message: editorMessage(error.code, error.message), code: error.code };
   }
   return { title: 'Something went wrong', message: error instanceof Error ? error.message : String(error) };
 }
@@ -216,7 +217,12 @@ export function usePipeline(
         },
         source: p.source && transcript.duration ? { ...p.source, duration: p.source.duration ?? transcript.duration } : p.source,
       }));
-      setNotice({ title: `Transcribed ${rows.length} segments`, message: fromCache ? 'Reused the saved transcript of this file (no re-transcription).' : `Language: ${transcript.language} · model ${transcript.engine.model}`, tone: 'success' });
+      const timing = transcript.warnings.find((w) => /couldn't be checked|DTW alignment off/.test(w));
+      setNotice({
+        title: `Transcribed ${rows.length} segments`,
+        message: `${fromCache ? 'Reused the saved transcript of this file (no re-transcription).' : `Language: ${transcript.language} · model ${transcript.engine.model}`}${timing ? ` ${timing}` : ''}`,
+        tone: timing ? 'info' : 'success',
+      });
     });
   }, [run, update]);
 
