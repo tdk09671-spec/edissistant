@@ -132,7 +132,7 @@ default model, and plain-language `problems`) without running anything.
 | `device` | `'auto'` | `auto`: GPU-capable run, retry once with `-ng` on failure. `cpu`: always `-ng`. `gpu`: no fallback |
 | `threads` | CPU cores − 1, max 8 | |
 | `audioTrack` | `0` | 0-based audio stream, e.g. the second lav mic in a MOV |
-| `dtwAlignment` | `false` | whisper.cpp DTW token alignment for tighter word timing (known model sizes only). Untested with real models |
+| `dtwAlignment` | `false` | whisper.cpp DTW token alignment for tighter word timing (known model sizes only). whisper.cpp ≥ 1.8 turns flash attention on by default, which silently disables DTW. The app reads `whisper-cli --help` and adds `-nfa` (only with DTW) when the build has it; older builds have no `-nfa` and flash attention off. If DTW was still switched off, the transcript carries a warning. The normal path keeps flash attention. |
 | `force` | `false` | Ignore the cache |
 | `grouping` | `pauseThreshold 0.8 s`, `maxDuration 8 s`, `maxChars 160` | Sentence splitting |
 
@@ -235,7 +235,7 @@ checked against the whisper.cpp source (`examples/cli/cli.cpp`), **not against a
 
 1. Real whisper.cpp Windows CPU build + a real model on real interview footage: accuracy, word timing against the
    waveform, speed (real-time factor) for base/small/large-v3-turbo.
-2. The flag set (`-ojf -pp -l -t -ng -of -f`, optional `-dtw`) on the exact whisper.cpp release you ship.
+2. The flag set (`-ojf -pp -l -t -ng -of -f`, optional `-dtw` and, with DTW on whisper.cpp ≥ 1.8, `-nfa`) on the exact whisper.cpp release you ship.
 3. A CUDA (or Vulkan) build on an NVIDIA GPU: device detection, speed, and the fallback when the driver is missing.
 4. A real (not simulated) non-ASCII Windows user account, network drives, and very long files (2 h+).
 5. Cancel/quit while transcribing on Windows (no orphaned `whisper-cli.exe` or `ffmpeg.exe`).

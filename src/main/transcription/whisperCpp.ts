@@ -117,6 +117,29 @@ export function resolveEngineFiles(input: EngineInput, platform: NodeJS.Platform
   }
 }
 
+/** What the installed whisper-cli supports, read from its --help text. */
+export interface WhisperCapabilities {
+  /**
+   * Has `-nfa` / `--no-flash-attn`. In whisper.cpp ≥ 1.8 flash attention is on by default and
+   * turns DTW token timing off ("dtw_token_timestamps is not supported with flash_attn - disabling").
+   * Older builds have no such flag and flash attention is off, so DTW works without it.
+   */
+  noFlashAttn: boolean;
+}
+
+const NO_CAPABILITIES: WhisperCapabilities = { noFlashAttn: false };
+
+export function parseWhisperHelp(text: string): WhisperCapabilities {
+  return { noFlashAttn: /(^|[\s,])(-nfa|--no-flash-attn)(?=[\s,]|$)/m.test(text) };
+}
+
+/** whisper-cli answers an unknown flag with "error: unknown argument: X", the usage text and exit code 0. */
+export function unknownArgument(log: string): string | null {
+  return /error: unknown argument: (\S+)/.exec(log)?.[1] ?? null;
+}
+
+const DTW_DISABLED = /dtw_token_timestamps is not supported with flash_attn/;
+
 /** Errors that a CPU retry can't fix, so 'auto' mode reports them instead of falling back. */
 const NOT_DEVICE_RELATED = /unknown argument|model file not found|input file not found|failed to read audio|unknown language|unknown DTW preset/i;
 
@@ -139,11 +162,26 @@ export class WhisperCppEngine implements TranscriptionEngine {
   private readonly prefixArgs: string[];
   private readonly platform: NodeJS.Platform;
   private cachedVersion?: Promise<string | undefined>;
+  private cachedCapabilities?: Promise<WhisperCapabilities>;
 
   constructor(options: WhisperCppOptions) {
     this.command = options.command;
     this.prefixArgs = options.prefixArgs ?? [];
     this.platform = options.platform ?? process.platform;
+  }
+
+  /** Reads --help once. Any failure means "assume an older CLI": no optional flags are added. */
+  capabilities(): Promise<WhisperCapabilities> {
+    this.cachedCapabilities ??= (async () => {
+      const lines: string[] = [];
+      try {
+        const r = await runProcess(this.command, [...this.prefixArgs, '--help'], { onStderrLine: (line) => lines.push(line) });
+        return parseWhisperHelp(`${r.stdout}\n${lines.join('\n')}`);
+      } catch {
+        return NO_CAPABILITIES;
+      }
+    })();
+    return this.cachedCapabilities;
   }
 
   version(): Promise<string | undefined> {
@@ -153,7 +191,7 @@ export class WhisperCppEngine implements TranscriptionEngine {
     return this.cachedVersion;
   }
 
-  buildArgs(input: EngineInput, useGpu: boolean, files: EngineFiles = directFiles(input)): string[] {
+  buildArgs(input: EngineInput, useGpu: boolean, files: EngineFiles = directFiles(input), caps: WhisperCapabilities = NO_CAPABILITIES): string[] {
     const args = [
       ...this.prefixArgs,
       // Paths relative to files.cwd where possible, so they stay ASCII-safe (see resolveEngineFiles).
@@ -173,17 +211,21 @@ export class WhisperCppEngine implements TranscriptionEngine {
     if (!useGpu) args.push('-ng');
     if (input.dtwAlignment) {
       const preset = dtwPreset(input.modelName);
-      if (preset) args.push('-dtw', preset);
+      if (preset) {
+        args.push('-dtw', preset);
+        // Only with DTW: the normal path keeps flash attention (the fast GPU path).
+        if (caps.noFlashAttn) args.push('-nfa');
+      }
     }
     return args;
   }
 
-  private async run(input: EngineInput, files: EngineFiles, useGpu: boolean, context: EngineContext): Promise<RunResult & { log: string }> {
+  private async run(input: EngineInput, files: EngineFiles, useGpu: boolean, context: EngineContext, caps: WhisperCapabilities): Promise<RunResult & { log: string }> {
     const log: string[] = [];
     const outFile = path.join(input.workDir, `${OUTPUT_BASENAME}.json`);
     fs.rmSync(outFile, { force: true });
     try {
-      const result = await runProcess(this.command, this.buildArgs(input, useGpu, files), {
+      const result = await runProcess(this.command, this.buildArgs(input, useGpu, files, caps), {
         cwd: files.cwd,
         signal: context.signal,
         onStderrLine: (line) => {
@@ -206,9 +248,22 @@ export class WhisperCppEngine implements TranscriptionEngine {
     }
     const files = resolveEngineFiles(input, this.platform);
 
+    let caps = input.dtwAlignment && dtwPreset(input.modelName) ? await this.capabilities() : NO_CAPABILITIES;
     let useGpu = input.device !== 'cpu';
     let cpuFallback = false;
-    let result = await this.run(input, files, useGpu, context);
+    let result = await this.run(input, files, useGpu, context, caps);
+
+    if (caps.noFlashAttn && unknownArgument(result.log) === '-nfa') {
+      // The help text listed -nfa but this build rejects it: run once more without it.
+      caps = NO_CAPABILITIES;
+      warnings.push('This whisper.cpp build rejected -nfa, so it ran without it.');
+      context.onProgress?.(0);
+      result = await this.run(input, files, useGpu, context, caps);
+    }
+    const unknown = unknownArgument(result.log);
+    if (unknown) {
+      throw new TranscriptionError('TRANSCRIPTION_FAILED', `This whisper.cpp build doesn't support the option ${unknown}. Update whisper.cpp or report the version you use.`, result.log.split('\n').slice(0, 5).join('\n'));
+    }
 
     if (result.code !== 0 && input.device === 'auto' && !NOT_DEVICE_RELATED.test(result.stderrTail)) {
       // GPU builds can fail at init (missing driver/runtime, out of VRAM). Retry once on the CPU.
@@ -216,7 +271,7 @@ export class WhisperCppEngine implements TranscriptionEngine {
       useGpu = false;
       warnings.push('GPU transcription failed, so it was retried on the CPU.');
       context.onProgress?.(0);
-      result = await this.run(input, files, false, context);
+      result = await this.run(input, files, false, context, caps);
     }
 
     if (result.code !== 0) {
@@ -231,6 +286,9 @@ export class WhisperCppEngine implements TranscriptionEngine {
     const outFile = path.join(input.workDir, `${OUTPUT_BASENAME}.json`);
     if (!fs.existsSync(outFile)) {
       throw new TranscriptionError('TRANSCRIPTION_FAILED', 'The transcription engine finished without writing a transcript.', result.stderrTail);
+    }
+    if (input.dtwAlignment && DTW_DISABLED.test(result.log)) {
+      warnings.push('whisper.cpp turned DTW alignment off because flash attention is on, so word timing uses standard token times. Update whisper.cpp to a build with -nfa (1.8 or newer).');
     }
     const parsed = parseWhisperCppJson(fs.readFileSync(outFile, 'utf8'), { dtw: input.dtwAlignment });
 

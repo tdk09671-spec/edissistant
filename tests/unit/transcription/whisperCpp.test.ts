@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { parseWhisperDevice, parseWhisperProgress, resolveEngineFiles, WhisperCppEngine, type EngineInput } from '../../../src/main/transcription/whisperCpp';
+import { parseWhisperDevice, parseWhisperHelp, parseWhisperProgress, resolveEngineFiles, unknownArgument, WhisperCppEngine, type EngineInput } from '../../../src/main/transcription/whisperCpp';
 import { TranscriptionError } from '../../../src/shared/transcription';
 import { copyFixture, fakeWhisper, tempDir } from './helpers';
 
@@ -199,5 +199,79 @@ describe('Unicode model paths on Windows', () => {
     const args = recorded(record).find((a) => a.includes('-m'))!;
     for (const flag of ['-m', '-f', '-of']) expect(ascii(args[args.indexOf(flag) + 1])).toBe(true);
     expect(fs.readdirSync(models)).toEqual(['ggml-base.en.bin']);
+  });
+});
+
+// Regression (Windows, whisper.cpp 1.9.x): flash attention is on by default since whisper.cpp 1.8
+// and silently disables DTW ("dtw_token_timestamps is not supported with flash_attn - disabling"),
+// so -dtw alone gave no DTW times. -nfa fixes it, but older CLIs don't know -nfa.
+describe('DTW and flash attention', () => {
+  const engineWith = (help: 'modern' | 'legacy' | 'lying', record: string, extra: string[] = []) =>
+    new WhisperCppEngine({ command: process.execPath, prefixArgs: [fakeWhisper, `--fake-help=${help}`, `--fake-record=${record}`, ...extra] });
+  const runs = (file: string) => recorded(file).filter((a) => !a.includes('--help'));
+
+  it('reads -nfa support from the help text', () => {
+    expect(parseWhisperHelp('  -fa,       --flash-attn           [true   ] enable flash attention\n  -nfa,      --no-flash-attn        [false  ] disable flash attention')).toEqual({ noFlashAttn: true });
+    expect(parseWhisperHelp('  -fa,       --flash-attn           [false  ] enable flash attention')).toEqual({ noFlashAttn: false });
+    expect(parseWhisperHelp('  --nfa-something    unrelated')).toEqual({ noFlashAttn: false });
+    expect(unknownArgument('error: unknown argument: -nfa\nusage: whisper-cli')).toBe('-nfa');
+    expect(unknownArgument('whisper_init: loading model')).toBeNull();
+  });
+
+  it('adds -nfa only with DTW, on GPU and CPU, and only when the CLI has it', () => {
+    const e = new WhisperCppEngine({ command: 'whisper-cli' });
+    const modern = { noFlashAttn: true };
+    expect(e.buildArgs({ ...input, dtwAlignment: true }, true, undefined, modern).slice(-3)).toEqual(['-dtw', 'base.en', '-nfa']);
+    const cpu = e.buildArgs({ ...input, dtwAlignment: true }, false, undefined, modern);
+    expect(cpu).toContain('-ng');
+    expect(cpu.slice(-3)).toEqual(['-dtw', 'base.en', '-nfa']);
+    // Normal transcription keeps flash attention (the fast GPU path).
+    expect(e.buildArgs(input, true, undefined, modern)).not.toContain('-nfa');
+    // Older CLI: no -nfa (flash attention is off there anyway).
+    expect(e.buildArgs({ ...input, dtwAlignment: true }, true)).not.toContain('-nfa');
+    // No DTW preset for this model: neither flag.
+    const custom = e.buildArgs({ ...input, dtwAlignment: true, modelName: 'my-finetune' }, true, undefined, modern);
+    expect(custom).not.toContain('-dtw');
+    expect(custom).not.toContain('-nfa');
+  });
+
+  it('modern CLI: DTW runs with -nfa and the words use DTW times', async () => {
+    const record = path.join(dir, 'modern.jsonl');
+    const out = await engineWith('modern', record).transcribe({ ...input, dtwAlignment: true, device: 'gpu' }, {});
+    expect(runs(record)[0]).toEqual(expect.arrayContaining(['-dtw', 'base.en', '-nfa']));
+    expect(out.warnings.join(' ')).not.toMatch(/turned DTW alignment off/);
+    // whisper-full.json: "back" has t_dtw 44 (0.44 s) and token offset 0.42 s.
+    expect(out.words.find((w) => w.text === 'back')?.start).toBe(0.44);
+  });
+
+  it('normal transcription never asks for help or adds -nfa', async () => {
+    const record = path.join(dir, 'fast.jsonl');
+    await engineWith('modern', record).transcribe({ ...input, device: 'gpu' }, {});
+    expect(recorded(record)).toHaveLength(1);
+    expect(recorded(record)[0]).not.toContain('-nfa');
+  });
+
+  it('older CLI: DTW runs without -nfa and works', async () => {
+    const record = path.join(dir, 'legacy.jsonl');
+    const out = await engineWith('legacy', record).transcribe({ ...input, dtwAlignment: true, device: 'cpu' }, {});
+    expect(runs(record)[0]).not.toContain('-nfa');
+    expect(runs(record)[0]).toContain('-ng');
+    expect(out.words.find((w) => w.text === 'back')?.start).toBe(0.44);
+  });
+
+  it('a CLI that lists -nfa but rejects it is run again without it', async () => {
+    const record = path.join(dir, 'lying.jsonl');
+    const out = await engineWith('lying', record).transcribe({ ...input, dtwAlignment: true }, {});
+    expect(runs(record).map((a) => a.includes('-nfa'))).toEqual([true, false]);
+    expect(out.warnings).toContain('This whisper.cpp build rejected -nfa, so it ran without it.');
+  });
+
+  it('DTW switched off by flash attention is reported, and token timing is used instead', async () => {
+    // A modern CLI whose help couldn't be read: -nfa isn't passed, so whisper.cpp disables DTW.
+    const e = engineWith('modern', path.join(dir, 'nohelp.jsonl'));
+    (e as unknown as { cachedCapabilities: Promise<unknown> }).cachedCapabilities = Promise.resolve({ noFlashAttn: false });
+    const out = await e.transcribe({ ...input, dtwAlignment: true }, {});
+    expect(out.warnings.join(' ')).toMatch(/turned DTW alignment off because flash attention is on/);
+    expect(out.words.find((w) => w.text === 'back')?.start).toBe(0.42);
   });
 });
