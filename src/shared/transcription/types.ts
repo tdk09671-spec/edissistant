@@ -14,6 +14,11 @@ export interface TranscriptWord {
   end: number;
   /** Mean token probability from the engine, 0–1. Absent for edited or interpolated words. */
   confidence?: number;
+  /**
+   * Set on the first word of a sentence whose start couldn't be verified against the audio (music
+   * or noise under it, an overlapping voice, or no clear onset). Its time may be early or late.
+   */
+  startUncertain?: boolean;
 }
 
 export interface TranscriptSentence {
@@ -71,6 +76,8 @@ export interface Transcript {
   wordTiming: WordTiming;
   /** How word and sentence times were produced (absent in transcripts made before 2026-10-31). */
   timing?: TranscriptTiming;
+  /** Absent in transcripts made before 2026-10-31 (round 2). */
+  coverage?: TranscriptCoverage;
   sentences: TranscriptSentence[];
   createdAt: string;
   /** Non-fatal issues worth showing to the editor (e.g. GPU fallback). */
@@ -84,6 +91,28 @@ export interface TranscriptTiming {
   refinedStarts: number;
   /** Such starts with no clear onset in the audio, left as the engine gave them (may be early). */
   uncheckedStarts: number;
+  /** Such starts the audio confirmed where the engine put them. */
+  confirmedStarts?: number;
+  /**
+   * Such starts with weak or ambiguous evidence (music or noise under them, an overlapping voice):
+   * moved to the best onset found, or left, and flagged on the word (`startUncertain`).
+   */
+  uncertainStarts?: number;
+  /**
+   * Set when a DTW run lost speech (e.g. whisper.cpp small.en with flash attention off stops early)
+   * and the transcript was made without DTW instead. `dtwEnd` is where the DTW run's text ended.
+   */
+  dtwFallback?: { reason: 'truncated'; dtwEnd: number };
+}
+
+/** Whether the transcript has text wherever the audio has speech. */
+export interface TranscriptCoverage {
+  /** False when speech in the audio still has no text after recovery (see `gaps`). */
+  complete: boolean;
+  /** Spans (seconds) with speech in the audio but no transcribed words. */
+  gaps: { start: number; end: number }[];
+  /** Spans the engine first skipped and a second pass on just that audio transcribed. */
+  recovered: { start: number; end: number }[];
 }
 
 export interface SentenceGroupingOptions {
