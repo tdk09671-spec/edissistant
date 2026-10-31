@@ -7,7 +7,7 @@ import { encodeFrames } from '../../../src/main/render/encoder';
 import { h264WithCpuFallback, RenderService } from '../../../src/main/render/service';
 import { RenderError } from '../../../src/shared/animation/errors';
 import { hardwareCandidates, probeEncoder, selectH264Encoder } from '../../../src/main/render/gpu';
-import type { RenderProgress, SequenceSpec } from '../../../src/shared/animation';
+import { secondsToFrames, type RenderProgress, type SequenceSpec } from '../../../src/shared/animation';
 import { ffmpeg, ffprobe, fullSpec, hasFfmpeg, pixelAt, syntheticFrames, tempDir, transparentSpec } from './helpers';
 
 let root: string;
@@ -219,6 +219,43 @@ describe.skipIf(!hasFfmpeg)('RenderService with real FFmpeg', () => {
     await expect(h264WithCpuFallback('h264_nvenc', undefined, fail(sandbox))).rejects.toBe(sandbox);
     await expect(h264WithCpuFallback('libx264', undefined, fail(encodeFailed))).rejects.toBe(encodeFailed);
   });
+});
+
+// Windows validation round 2 (a6fe66f): start frames were right, but 2 of 8 out-points at 25 fps and
+// 5 of 8 at 29.97 were a frame off, because each clip had round(duration·fps) frames instead of
+// round(end·fps) − round(start·fps). These are the measured graphics, back to back.
+describe.skipIf(!hasFfmpeg)('graphic first and last frames at 25, 24000/1001 and 30000/1001', () => {
+  const W = 64;
+  const H = 36;
+  const ROWS = [
+    { id: 'g1', start: 6.18, end: 12.0, color: '#ff0000' },
+    { id: 'g2', start: 12.0, end: 18.11, color: '#00ff00' },
+    { id: 'g3', start: 18.11, end: 22.77, color: '#0000ff' },
+  ];
+  it.each([25, 23.976, 29.97])('at %s fps every graphic covers exactly round(start·fps) … round(end·fps) − 1', async (fps) => {
+    const s = service();
+    const segments = ROWS.map((r) => transparentSpec(r.id, r.start, r.color, Math.round((r.end - r.start) * 1000) / 1000, { fps, width: W, height: H }));
+    const r = await s.renderSequence({ id: 'p', width: W, height: H, fps, duration: 23.5, segments }, {}, job(`fps-${fps}`));
+    const spans = ROWS.map((row) => ({ ...row, first: secondsToFrames(row.start, fps), last: secondsToFrames(row.end, fps) - 1 }));
+    // Each exported clip has exactly the frames it covers on the timeline (what an NLE places).
+    spans.forEach((span, i) => expect(r.segments[i].metadata.frames, span.id).toBe(span.last - span.first + 1));
+
+    const at = spans.flatMap((sp) => [sp.first - 1, sp.first, sp.last, sp.last + 1]);
+    const frames = await decodeFrames(ffmpeg!, r.preview!.path, at, W, H, 'h264');
+    const colorAt = (i: number) => {
+      const [red, green, blue] = pixelAt(frames[i], W, (W * 3) / 4, H / 2);
+      if (red > 150 && green < 90 && blue < 90) return '#ff0000';
+      if (green > 150 && red < 90 && blue < 90) return '#00ff00';
+      if (blue > 150 && red < 90 && green < 90) return '#0000ff';
+      if (red < 40 && green < 40 && blue < 40) return 'black';
+      return `rgb(${red},${green},${blue})`;
+    };
+    const expected = (frame: number) => spans.find((sp) => frame >= sp.first && frame <= sp.last)?.color ?? 'black';
+    at.forEach((frame, i) => expect(colorAt(i), `frame ${frame} at ${fps} fps`).toBe(expected(frame)));
+    // Back to back: the frame after one graphic's last frame is the next graphic's first.
+    expect(spans[0].last + 1).toBe(spans[1].first);
+    expect(spans[1].last + 1).toBe(spans[2].first);
+  }, 120_000);
 });
 
 describe.skipIf(!hasFfmpeg)('sequences: selective regeneration and preview composition', () => {

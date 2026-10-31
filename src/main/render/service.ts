@@ -5,7 +5,7 @@ import { cancelled, RenderError } from '../../shared/animation/errors';
 import { defaultFormat, EXPORT_FORMATS, formatAllowedForMode, type RenderQuality } from '../../shared/animation/formats';
 import { stableStringify } from '../../shared/animation/random';
 import { renderIdentity, RENDER_ENGINE_VERSION } from '../../shared/animation/sequence';
-import { frameCount } from '../../shared/animation/timeline';
+import { frameCount, segmentFrames } from '../../shared/animation/timeline';
 import type { AnimationSpec, ExportFormatId, SequenceSpec } from '../../shared/animation/types';
 import { validateAnimationSpec, validateSequence } from '../../shared/animation/validate';
 import { loadAssets } from './assets';
@@ -158,13 +158,13 @@ export class RenderService {
       if (options.baseVideo && !fs.existsSync(options.baseVideo)) throw new RenderError('MEDIA_NOT_FOUND', `Base video not found: ${options.baseVideo}`);
 
       const compose = options.compose !== false;
-      const totalFrames = sequence.segments.reduce((n, s) => n + frameCount(s.duration, s.fps), 0) || 1;
+      const totalFrames = sequence.segments.reduce((n, s) => n + segmentFrames(s.start, s.duration, s.fps).count, 0) || 1;
       const renderShare = compose ? 0.85 : 1;
       const segments: SegmentRenderResult[] = [];
       let done = 0;
       for (const spec of sequence.segments) {
         if (handlers.signal?.aborted) throw cancelled();
-        const weight = frameCount(spec.duration, spec.fps) / totalFrames;
+        const weight = segmentFrames(spec.start, spec.duration, spec.fps).count / totalFrames;
         const span: [number, number] = [done * renderShare, (done + weight) * renderShare];
         segments.push(await this.renderOne(spec, options, handlers.signal, report, span));
         done += weight;
@@ -215,7 +215,8 @@ export class RenderService {
       }
     }
 
-    const frames = frameCount(spec.duration, spec.fps);
+    // Same frame span as the composition and the exported clip's place in an NLE (see segmentFrames).
+    const frames = segmentFrames(spec.start, spec.duration, spec.fps).count;
     const workDir = this.cache.createWorkDir();
     const output = path.join(workDir, `render${EXPORT_FORMATS[format].extension}`);
     const source = this.config.createFrameSource({ spec, width, height, scale: width / spec.width, assets, systemFonts: checked.systemFonts });
