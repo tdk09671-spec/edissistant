@@ -221,3 +221,24 @@ describe('word timing mode after transcription', () => {
     expect(transcriptionNotice(withTiming({ source: 'tokens' }), [], false, false)).toMatchObject({ tone: 'success', message: expect.stringContaining('Word timing: standard.') });
   });
 });
+
+// Round 3: unverified sentence ends are marked on the row and named in the notice.
+describe('unverified sentence ends', () => {
+  it('rows carry the end flag and the notice points to the graphic out point', () => {
+    const transcript = {
+      language: 'en',
+      engine: { model: 'base.en' },
+      warnings: [],
+      coverage: { complete: true, gaps: [], recovered: [] },
+      sentences: [
+        { id: 's1', start: 1, end: 2, text: 'Wait a second.', words: [{ text: 'Wait', start: 1, end: 1.4 }, { text: 'a', start: 1.4, end: 1.5 }, { text: 'second.', start: 1.5, end: 2, endUncertain: true }] },
+        { id: 's2', start: 2.02, end: 3, text: 'Sure.', words: [{ text: 'Sure.', start: 2.02, end: 3 }] },
+      ],
+    } as unknown as Transcript;
+    const rows = transcriptRows(transcript);
+    expect(rows.map((r) => r.endUncertain)).toEqual([true, undefined]);
+    const notice = transcriptionNotice(transcript, rows, false);
+    expect(notice.tone).toBe('warning');
+    expect(notice.message).toMatch(/end of segment 1 couldn’t be verified .* graphic out point/);
+  });
+});
