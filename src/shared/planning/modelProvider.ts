@@ -349,6 +349,8 @@ export class ModelConceptProvider implements PlanningProvider {
         if (reply.stopReason === 'max_tokens') throw new PlanningError('TRUNCATED', 'The model response was cut off at the output limit.', { retryable: false });
         return key ? { ...reply, cacheKey: key } : reply;
       } catch (error) {
+        // Whatever the transport threw, a request the editor cancelled is reported as cancelled.
+        if (call.signal?.aborted) throw new PlanningError('CANCELLED', 'Planning was cancelled.');
         const e = error instanceof PlanningError ? error : new PlanningError('SERVER_ERROR', error instanceof Error ? error.message : String(error));
         if (!e.retryable || attempt === this.retry.maxAttempts) throw e;
         lastError = e;

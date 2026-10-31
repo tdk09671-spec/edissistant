@@ -40,7 +40,7 @@ function readJson<T>(file: string): T | null {
 export type ConfigState = { state: 'missing'; file: string } | { state: 'ok'; file: string; config: PlanningConfig } | { state: 'invalid'; file: string; issues: string[] };
 
 export class PlanningStore {
-  constructor(private readonly root: string, private readonly keepRevisions = 10) {}
+  constructor(readonly root: string, private readonly keepRevisions = 10) {}
 
   get configFile(): string {
     return path.join(this.root, 'config.json');

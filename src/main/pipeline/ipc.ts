@@ -2,7 +2,8 @@ import type { IpcMain } from 'electron';
 import { CONCEPT_IDS } from '../../shared/planning/concepts';
 import { isSupportedFps } from '../../shared/animation/timeline';
 import type { EditorAction } from '../../shared/planning/approval';
-import type { ActRequest, BuildRequest, PipelineResult, PipelineSegment, PlanRequest, ProjectPlanningInput, RenderTarget } from '../../shared/pipeline/types';
+import type { ActRequest, BuildRequest, PipelineResult, PipelineSegment, PlanReferences, PlanRequest, ProjectPlanningInput, RenderTarget } from '../../shared/pipeline/types';
+import { AiError, type AiService } from './ai';
 import { checkMedia, MediaError, probeSource } from './media';
 import { PipelineError, type PipelineService } from './service';
 
@@ -102,7 +103,25 @@ function planRequest(v: unknown): PlanRequest {
   const allowReplan = r.allowReplan === undefined ? undefined : r.allowReplan;
   if (allowReplan !== undefined && (!Array.isArray(allowReplan) || !allowReplan.every((x) => typeof x === 'string'))) throw new Invalid('allowReplan must be a list of segment ids.');
   if (r.useModel !== undefined && typeof r.useModel !== 'boolean') throw new Invalid('useModel must be true or false.');
-  return { ...planningInput(v), ...(allowReplan ? { allowReplan: allowReplan as string[] } : {}), useModel: r.useModel === true };
+  const jobId = r.jobId === undefined ? undefined : str(r.jobId, 'jobId', 128);
+  if (jobId !== undefined && !ID.test(jobId)) throw new Invalid('jobId may only contain letters, digits, ".", "_" and "-".');
+  return {
+    ...planningInput(v),
+    ...(allowReplan ? { allowReplan: allowReplan as string[] } : {}),
+    useModel: r.useModel === true,
+    ...(r.references !== undefined ? { references: references(r.references) } : {}),
+    ...(jobId ? { jobId } : {}),
+  };
+}
+
+function references(v: unknown): PlanReferences {
+  const r = obj(v, 'references');
+  const list = (x: unknown, what: string, max: number, chars: number): string[] => {
+    if (x === undefined) return [];
+    if (!Array.isArray(x) || x.length > max) throw new Invalid(`${what} must be a list (at most ${max}).`);
+    return x.map((s, i) => str(s, `${what}[${i}]`, chars));
+  };
+  return { notes: list(r.notes, 'references.notes', 50, 4_000), imagePaths: list(r.imagePaths, 'references.imagePaths', 10, 4_096) };
 }
 
 function action(v: unknown): EditorAction {
@@ -148,11 +167,11 @@ function buildRequest(v: unknown): BuildRequest {
 }
 
 /** The request validators, exported for tests. */
-export const validators = { segments, planningInput, buildRequest };
+export const validators = { segments, planningInput, buildRequest, planRequest };
 
 function failure(error: unknown): PipelineResult<never> {
   if (error instanceof Invalid) return { ok: false, error: { code: 'INVALID_REQUEST', message: error.message } };
-  if (error instanceof MediaError || error instanceof PipelineError) return { ok: false, error: { code: error.code, message: error.message } };
+  if (error instanceof MediaError || error instanceof PipelineError || error instanceof AiError) return { ok: false, error: { code: error.code, message: error.message } };
   const code = (error as { code?: unknown })?.code;
   return { ok: false, error: { code: typeof code === 'string' ? code : 'PLANNING_FAILED', message: error instanceof Error ? error.message : String(error) } };
 }
@@ -172,10 +191,54 @@ async function wrap<T>(run: () => Promise<T> | T): Promise<PipelineResult<T>> {
  *  - pipeline:act (ActRequest)          → PlanOutcome
  *  - pipeline:build (BuildRequest)      → BuildOutcome (+ updates)
  *  - pipeline:checkMedia (path)         → MediaCheck
+ *  - pipeline:estimate (PlanRequest)    → PlanEstimate (local; nothing is sent)
+ *  - pipeline:cancel (jobId)            → boolean (raw)
+ *  - ai:status / ai:setProvider / ai:test / ai:config:get / ai:config:set / ai:usage
+ * None of them ever returns the API key.
  */
-export function registerPipelineIpc(ipcMain: IpcMain, service: PipelineService, ffprobe: () => string | undefined): void {
+export function registerPipelineIpc(ipcMain: IpcMain, service: PipelineService, ffprobe: () => string | undefined, ai: AiService): void {
+  // Claude runs in progress: cancel by job id; one run per project at a time (a double click must
+  // never pay twice).
+  const jobs = new Map<string, AbortController>();
+  const busy = new Set<string>();
+
+  const plan = async (request: PlanRequest) => {
+    if (!request.useModel) return service.plan(request);
+    await ai.assertCanRun();
+    if (busy.has(request.projectId)) throw new AiError('BUSY', 'A Claude run for this project is already in progress.');
+    const refs = ai.references(request.references);
+    const controller = new AbortController();
+    if (request.jobId) jobs.set(request.jobId, controller);
+    busy.add(request.projectId);
+    try {
+      return await service.plan(request, { signal: controller.signal, references: refs });
+    } finally {
+      busy.delete(request.projectId);
+      if (request.jobId) jobs.delete(request.jobId);
+    }
+  };
+
   ipcMain.handle('pipeline:probeSource', (_e, file: unknown) => wrap(() => probeSource(ffprobe(), file)));
-  ipcMain.handle('pipeline:plan', (_e, request: unknown) => wrap(() => service.plan(planRequest(request))));
+  ipcMain.handle('pipeline:plan', (_e, request: unknown) => wrap(() => plan(planRequest(request))));
+  ipcMain.handle('pipeline:estimate', (_e, request: unknown) =>
+    wrap(async () => {
+      const r = planRequest(request);
+      const estimate = await service.estimate(r, ai.references(r.references));
+      const blocked = await ai.blocked();
+      return blocked ? { ...estimate, blockedBy: blocked } : estimate;
+    })
+  );
+  ipcMain.handle('pipeline:cancel', (_e, jobId: unknown) => {
+    const controller = typeof jobId === 'string' ? jobs.get(jobId) : undefined;
+    controller?.abort();
+    return Boolean(controller);
+  });
+  ipcMain.handle('ai:status', () => wrap(() => ai.status()));
+  ipcMain.handle('ai:setProvider', (_e, provider: unknown) => wrap(() => ai.setProvider(provider)));
+  ipcMain.handle('ai:test', () => wrap(() => ai.test()));
+  ipcMain.handle('ai:config:get', () => wrap(() => ai.config()));
+  ipcMain.handle('ai:config:set', (_e, update: unknown) => wrap(() => ai.setConfig(update)));
+  ipcMain.handle('ai:usage', (_e, projectId: unknown) => wrap(() => ai.usage(projectId ?? undefined)));
   ipcMain.handle('pipeline:act', (_e, request: unknown) =>
     wrap(() => {
       const r = obj(request, 'request');

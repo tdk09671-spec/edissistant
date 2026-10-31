@@ -5,7 +5,8 @@ import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { EDITOR_RUN_POLICY, PlanningService } from '../../../src/main/planning';
 import { mapSdkError, testAnthropicConnection } from '../../../src/main/planning/anthropicTransport';
-import { PLANNING_CONFIG_SCHEMA, PlanningError, profileSummary, type ModelCall, type ModelReply, type ModelTransport } from '../../../src/shared/planning';
+import { PLANNING_CONFIG_SCHEMA, PlanningError, profileSummary } from '../../../src/shared/planning';
+import { fakeTransport, usage } from './fakeClaude';
 import { now, profile, transcript } from './helpers';
 
 // Claude runs the editor starts and pays for (V1 BYOK). No real API call anywhere: the transport is
@@ -16,37 +17,6 @@ beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-run-'));
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
-
-const FITTING: Record<string, string> = {
-  a1: 'kinetic-headline',
-  a2: 'counter-hero',
-  a3: 'line-trend',
-  a4: 'question-card',
-  a5: 'process-steps',
-  a6: 'progress-ring',
-  a7: 'speaker-only',
-  a8: 'stat-split',
-  a9: 'caption-emphasis',
-  a10: 'kinetic-headline',
-};
-const ids = (user: string) => [...user.matchAll(/<transcript_segment id="([^"]+)"/g)].map((m) => m[1]);
-const usage = { inputTokens: 3000, outputTokens: 1200, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 };
-
-/** Answers every segment it was sent with a valid candidate, or runs `fail` instead. */
-function fakeTransport(fail?: (call: ModelCall, n: number) => ModelReply | never) {
-  const calls: ModelCall[] = [];
-  const t: ModelTransport & { calls: ModelCall[] } = {
-    calls,
-    async complete(call) {
-      calls.push(call);
-      if (fail) return fail(call, calls.length);
-      // Varied concepts that fit each line, as a real answer would (the planner penalises repeats).
-      const segments = ids(call.user).map((segmentId) => ({ segmentId, meaning: 'a point', candidates: [{ conceptId: FITTING[segmentId] ?? 'kinetic-headline', fit: 0.95, reasoning: 'Fits what is said.' }] }));
-      return { text: JSON.stringify({ segments }), stopReason: 'end_turn', usage, model: call.model };
-    },
-  };
-  return t;
-}
 
 const request = (projectId = 'p1') => ({ projectId, profile: profile(), segments: transcript('video-a') });
 const writeConfig = (cfg: object) => {

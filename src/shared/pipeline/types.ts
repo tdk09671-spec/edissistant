@@ -91,6 +91,118 @@ export interface PlanRequest extends ProjectPlanningInput {
   allowReplan?: string[];
   /** Ask Claude for candidates (costs money; needs a key). The app keeps this off until approved. */
   useModel?: boolean;
+  /** Only with useModel: reference material the editor chose to send with this run. */
+  references?: PlanReferences;
+  /** Chosen by the caller so it can cancel the run (pipeline:cancel) before it settles. */
+  jobId?: string;
+}
+
+/**
+ * Reference material for a Claude run. Notes and links go as text (marked as untrusted reference
+ * material, never as instructions). Image files are read and checked by the main process; only PNG,
+ * JPEG and WebP are accepted. Videos are never sent.
+ */
+export interface PlanReferences {
+  notes: string[];
+  imagePaths: string[];
+}
+
+/** What one Claude run sent and cost (estimates from the token counts Anthropic returned). */
+export interface RunUsage {
+  calls: number;
+  cachedRequests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  estimatedCost: number | null;
+  models: string[];
+}
+
+/** pipeline:estimate: what a Claude run would send and cost, worked out locally (nothing is sent). */
+export interface PlanEstimate {
+  model: string;
+  segments: number;
+  requests: number;
+  cachedRequests: number;
+  inputTokens: number;
+  expectedCost: number;
+  maxCost: number;
+  pricingVersion: string;
+  /** False when the model isn't in the price table (the upper bound then uses the dearest model). */
+  priced: boolean;
+  images: number;
+  projectSpent: number;
+  monthSpent: number;
+  budget: { softLimit?: number; hardLimit?: number };
+  monthlyLimit?: number;
+  /** Set when the run would be refused (a limit, invalid settings, no key, provider off). */
+  blockedBy?: string;
+  /** Transcript rows that would be sent (ids), so the consent dialog can say exactly what goes out. */
+  segmentIds: string[];
+}
+
+export type AiProvider = 'local' | 'anthropic';
+
+/** The last connection test (stored without the key). */
+export interface AiConnection {
+  ok: boolean;
+  at: string;
+  model: string;
+  code?: string;
+  message?: string;
+  displayName?: string;
+}
+
+export interface AiStatus {
+  provider: AiProvider;
+  keyStored: boolean;
+  encryptionAvailable: boolean;
+  model: string;
+  /** Cleared whenever the key or the model changes. */
+  lastTest: AiConnection | null;
+  /** Set when planning/config.json is invalid (Claude runs are refused until it is fixed). */
+  configIssue?: string;
+}
+
+export interface AiConfig {
+  model: string;
+  defaultModel: string;
+  /** Models with a price in the table (others can be used; estimates then assume the dearest). */
+  knownModels: string[];
+  softLimit?: number;
+  hardLimit?: number;
+  monthlyLimit?: number;
+  pricingVersion: string;
+}
+
+/** null removes a setting (back to the default). */
+export interface AiConfigUpdate {
+  model?: string | null;
+  softLimit?: number | null;
+  hardLimit?: number | null;
+  monthlyLimit?: number | null;
+}
+
+export interface AiUsageEntry {
+  at: string;
+  model: string;
+  segments: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  estimatedCost: number | null;
+}
+
+export interface AiUsage {
+  month: string;
+  monthSpent: number;
+  monthlyLimit?: number;
+  projects: { projectId: string; calls: number; estimatedCost: number; inputTokens: number; outputTokens: number; lastAt: string | null }[];
+  /** Only when a project id was given. */
+  history?: AiUsageEntry[];
+  disclaimer: string;
 }
 
 export interface PlanOutcome {
@@ -102,6 +214,8 @@ export interface PlanOutcome {
   findings: PlanFinding[];
   profile: { id: string; revision: number; confidence: number; uncertainties: string[] };
   cost: { calls: number; estimatedCost: number; warnings: string[] };
+  /** Only for a Claude run: what this run sent and cost. */
+  run?: RunUsage;
   /** Set when the requested decision was held back (e.g. approving a suggestion the editor hasn't seen). */
   deferred?: string;
   /** What happened to a changed editor instruction when the segment was approved. */
@@ -184,4 +298,12 @@ export interface PipelineBridgeAPI {
   planAction: (request: ActRequest) => Promise<PipelineResult<PlanOutcome>>;
   buildSequence: (request: BuildRequest) => Promise<PipelineResult<BuildResponse>>;
   checkMedia: (mediaPath: string) => Promise<PipelineResult<MediaCheck>>;
+  estimatePlan: (request: PlanRequest) => Promise<PipelineResult<PlanEstimate>>;
+  cancelPlan: (jobId: string) => Promise<boolean>;
+  getAiStatus: () => Promise<PipelineResult<AiStatus>>;
+  setAiProvider: (provider: AiProvider) => Promise<PipelineResult<AiStatus>>;
+  testAiConnection: () => Promise<PipelineResult<AiConnection>>;
+  getAiConfig: () => Promise<PipelineResult<AiConfig>>;
+  setAiConfig: (update: AiConfigUpdate) => Promise<PipelineResult<AiConfig>>;
+  getAiUsage: (projectId?: string) => Promise<PipelineResult<AiUsage>>;
 }

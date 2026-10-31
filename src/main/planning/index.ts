@@ -1,5 +1,5 @@
-// Main-process entry point for the creative planning engine. Not wired into IPC yet (no UI changes in
-// this phase); see docs/PLANNING.md "Integration" for the exact steps.
+// Main-process entry point for the creative planning engine. The pipeline service (src/main/pipeline)
+// calls it for local planning and for editor-started Claude runs; see docs/PLANNING.md.
 
 import * as crypto from 'crypto';
 import * as path from 'path';
@@ -70,6 +70,8 @@ export interface PlanEstimate {
   monthlyLimit?: number;
   /** Set when even the upper bound would pass a limit: the run would be refused. */
   blockedBy?: string;
+  /** The transcript rows that would be sent. */
+  segmentIds: string[];
 }
 
 export interface UsageOverview {
@@ -78,6 +80,21 @@ export interface UsageOverview {
   monthlyLimit?: number;
   projects: { projectId: string; calls: number; estimatedCost: number; inputTokens: number; outputTokens: number; lastAt: string | null }[];
   disclaimer: string;
+}
+
+/** What one plan() call sent and cost (the project totals are in `cost`). */
+export interface RunUsage {
+  /** Requests sent to Anthropic (billed). */
+  calls: number;
+  /** Requests answered from the local cache (not sent, not billed). */
+  cachedRequests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  /** USD estimate; null when a call's model has no price in the table. */
+  estimatedCost: number | null;
+  models: string[];
 }
 
 const monthOf = (iso: string) => iso.slice(0, 7);
@@ -184,13 +201,13 @@ export class PlanningService {
     return tighten(settings.budget, { hardLimit: projectSpent + left });
   }
 
-  private modelProvider(projectId: string, settings: EffectivePlanningSettings, tracker: CostTracker, policy?: ModelRunPolicy, references?: PlanningReferences): ModelConceptProvider {
+  private modelProvider(projectId: string, settings: EffectivePlanningSettings, tracker: CostTracker, policy?: ModelRunPolicy, references?: PlanningReferences, cache: ResponseCache = this.responseCache): ModelConceptProvider {
     return new ModelConceptProvider({
       ...settings.model,
       ...(policy ? { retry: { ...settings.model.retry, maxAttempts: policy.maxAttempts }, validationRetries: policy.validationRetries, fallbackToLocal: policy.fallbackToLocal } : {}),
       transport: this.options.transport ?? new AnthropicTransport({ getApiKey: this.options.getApiKey, refusalFallback: settings.refusalFallback, baseURL: this.options.baseURL }),
       tracker,
-      cache: this.responseCache,
+      cache,
       hash: PlanningService.hash,
       ...(references ? { references } : {}),
       ...(this.options.now ? { now: this.options.now } : {}),
@@ -251,6 +268,7 @@ export class PlanningService {
       budget,
       ...(monthlyLimit !== undefined ? { monthlyLimit } : {}),
       ...(blockedBy ? { blockedBy } : {}),
+      segmentIds: probe.request?.segments.map((x) => x.segmentId) ?? [],
     };
   }
 
@@ -285,12 +303,13 @@ export class PlanningService {
 
   /**
    * Plans a project. `useModel: false` (the default) is free and local. With `useModel: true` the
-   * model is asked for candidates within the budget; failures fall back to local suggestions.
+   * model is asked for candidates within the budget. Without a policy, failures fall back to local
+   * suggestions (PR #3 behaviour); with EDITOR_RUN_POLICY a failure throws and changes nothing.
    */
   async plan(
     request: PlanningRequest,
     opts: { useModel?: boolean; allowReplan?: string[]; budget?: Budget; signal?: AbortSignal; policy?: ModelRunPolicy; references?: PlanningReferences } = {}
-  ): Promise<PlanResult & { cost: CostReport }> {
+  ): Promise<PlanResult & { cost: CostReport; run: RunUsage }> {
     const settings = this.settings(request.projectId, opts.budget);
     // An editor's Claude run (it carries a policy) never quietly turns into a local one.
     if (opts.useModel && !settings.modelAllowed && opts.policy) throw new PlanningError('INVALID_INPUT', settings.warnings[0] ?? 'Planning settings are invalid.');
@@ -298,12 +317,33 @@ export class PlanningService {
     const effective = useModel ? { ...settings, budget: this.budgetFor(request.projectId, settings) } : settings;
     const tracker = this.tracker(request.projectId, effective);
     const before = tracker.usageEntries().length;
-    const provider = useModel ? this.modelProvider(request.projectId, effective, tracker, opts.policy, opts.references) : new LocalConceptProvider();
+    let cachedRequests = 0;
+    const cache: ResponseCache = {
+      get: (key) => {
+        const hit = this.responseCache.get(key);
+        if (hit) cachedRequests++;
+        return hit;
+      },
+      set: (key, reply) => this.responseCache.set(key, reply),
+    };
+    const provider = useModel ? this.modelProvider(request.projectId, effective, tracker, opts.policy, opts.references, cache) : new LocalConceptProvider();
     const clientHistory = request.clientHistory ?? this.store.clientHistory(request.profile.id);
     try {
       const result = await this.planner.plan({ ...request, clientHistory }, { provider, previous: this.store.loadPlan(request.projectId), allowReplan: opts.allowReplan, signal: opts.signal, now: this.options.now });
       this.store.savePlan(result.plan);
-      return { ...result, warnings: [...settings.warnings, ...result.warnings], cost: tracker.report() };
+      const entries = tracker.usageEntries().slice(before);
+      const sum = (f: (e: UsageEntry) => number) => entries.reduce((n, e) => n + f(e), 0);
+      const run: RunUsage = {
+        calls: entries.length,
+        cachedRequests,
+        inputTokens: sum((e) => e.inputTokens),
+        outputTokens: sum((e) => e.outputTokens),
+        cacheReadInputTokens: sum((e) => e.cacheReadInputTokens),
+        cacheCreationInputTokens: sum((e) => e.cacheCreationInputTokens),
+        estimatedCost: entries.some((e) => e.estimatedCost === null) ? null : Math.round(sum((e) => e.estimatedCost ?? 0) * 1e6) / 1e6,
+        models: [...new Set(entries.map((e) => e.model))],
+      };
+      return { ...result, warnings: [...settings.warnings, ...result.warnings], cost: tracker.report(), run };
     } finally {
       // Whatever happened, every billed response is recorded (a failed run still costs money).
       this.store.appendUsage(tracker.usageEntries().slice(before));
