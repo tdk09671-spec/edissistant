@@ -128,7 +128,7 @@ therefore carries the same commits, and merges cleanly whichever lands first.
 | PR #3 tests | `tests/fixtures/planning/presets.json` was never committed (`.gitignore` ignores `presets.json`), so planning tests failed on a clean checkout. | `27b2389`: fixture added explicitly. |
 | main `src/renderer/lib/time.ts` | Timecode display counted 29.97 as 30 fps, drifting 3.6 s per hour. | [#5](https://github.com/tdk09671-spec/edissistant/pull/5) `c8a80b2`: frames counted at the exact rate, labelled as non-drop timecode. |
 
-**Found in real Windows testing of `6e35122` (2026-11), fixed in their own branches:**
+**Found in real Windows testing of `6e35122`, fixed in their own branches:**
 
 | Where | Problem | Fix (commits) |
 | --- | --- | --- |
@@ -251,7 +251,7 @@ Everything else is real:
 - FFmpeg encoding and composition
 - export copy and FFprobe verification
 
-**Linux results (2026-11-01, from a clean clone of the pushed branch):**
+**Linux results (2026-10-31, from a clean clone of the pushed branch):**
 - `npm ci`, typecheck and build pass.
 - Unit tests: 429 passed, 2 skipped.
 - E2E: 34/34 passed as a normal user.

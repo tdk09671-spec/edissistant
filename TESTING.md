@@ -17,7 +17,7 @@ npm run test:e2e  # builds, then drives the real Electron app with Playwright
 - On failure, Playwright keeps a trace and a screenshot in `test-results/` (`npx playwright show-trace <trace.zip>`). An HTML report goes to `playwright-report/`.
 - The E2E tests need a desktop session. Cloud or headless Linux sessions can run `npm run test:unit`, `npm run typecheck` and `npm run build`. Running E2E there would need `xvfb-run` and is untested.
 
-## Test log v4: end-to-end integration (Linux, 2026-11-01)
+## Test log v4: end-to-end integration (Linux, 2026-10-31)
 
 This is branch `feature/end-to-end-integration`, verified from a **clean clone** of the pushed branch. Its base is `main` `ec16bac`, with these merged in:
 - PR #1 `ab032ef`
