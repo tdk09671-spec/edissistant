@@ -255,6 +255,9 @@ const FILE_FILTERS: Record<string, Electron.FileFilter[]> = {
   media: [{ name: 'Video & audio', extensions: ['mp4', 'm4v', 'mov', 'webm', 'mkv', 'mp3', 'wav', 'm4a', 'aac'] }],
   captions: [{ name: 'Captions & transcripts', extensions: ['srt', 'vtt', 'txt'] }],
   image: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'svg'] }],
+  // Preset references: videos stay local (analysed on this computer); still images can be shown to
+  // Claude when the editor ticks them for a run.
+  reference: [{ name: 'Reference videos & images', extensions: ['mp4', 'm4v', 'mov', 'webm', 'mkv', 'png', 'jpg', 'jpeg', 'webp'] }],
 };
 
 ipcMain.handle('dialog:openFiles', async (event, options: { kind?: string; multiple?: boolean; title?: string }) => {

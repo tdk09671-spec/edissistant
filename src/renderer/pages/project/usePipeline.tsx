@@ -7,6 +7,7 @@ import { getSegments } from '../../lib/project';
 import {
   actionForStatus,
   adoptSourceTiming,
+  CLAUDE_TITLES,
   editorMessage,
   applyUpdates,
   exportProblems,
@@ -20,13 +21,15 @@ import {
   transcriptionNotice,
   transcriptRows,
   unwrap,
+  usd,
 } from '../../lib/pipeline';
 import type { EditorAction } from '../../../shared/planning/approval';
+import type { PlanReferences } from '../../../shared/pipeline/types';
 import { segmentFrames } from '../../../shared/animation/timeline';
 import { visualModeInfo } from '../../lib/catalog';
 import type { AppSettings, ExportRecord, MediaCheck, Preset, Project, RenderTarget, Segment, SegmentStatus } from '../../types';
 
-export type JobKind = 'transcribe' | 'plan' | 'render' | 'export';
+export type JobKind = 'transcribe' | 'plan' | 'claude' | 'render' | 'export';
 
 
 export interface PipelineJob {
@@ -66,6 +69,8 @@ export interface Pipeline {
   probeSource: (project?: Project) => Promise<void>;
   transcribe: () => Promise<void>;
   suggest: (options?: { allowReplan?: string[] }) => Promise<void>;
+  /** A paid Claude run the editor confirmed (see ClaudeRunDialog). Never retried automatically. */
+  generateWithClaude: (options: { allowReplan: string[]; references: PlanReferences }) => Promise<boolean>;
   act: (segmentId: string, action: EditorAction) => Promise<void>;
   setStatus: (segment: Segment, status: SegmentStatus) => Promise<void>;
   renderPreview: () => Promise<void>;
@@ -75,6 +80,7 @@ export interface Pipeline {
 const TITLES: Record<JobKind, string> = {
   transcribe: 'Transcribing',
   plan: 'Planning visuals',
+  claude: 'Generating with Claude',
   render: 'Rendering preview',
   export: 'Exporting',
 };
@@ -105,6 +111,7 @@ function titleFor(code: string): string {
     case 'PRESET_NOT_FOUND':
       return 'Preset missing';
     default:
+      if (CLAUDE_TITLES[code]) return CLAUDE_TITLES[code];
       return 'The job failed';
   }
 }
@@ -160,7 +167,10 @@ export function usePipeline(
         }
       );
     } catch (e) {
-      if (isCancel(e)) setNotice({ title: `${TITLES[kind]} cancelled`, message: 'Nothing was changed.', tone: 'info' });
+      if (isCancel(e)) {
+        const billed = kind === 'claude' ? ' If the request had already reached Anthropic, it may still be billed.' : '';
+        setNotice({ title: `${TITLES[kind]} cancelled`, message: `Nothing was changed.${billed}`, tone: 'info' });
+      }
       else setError(describe(e));
       return null;
     } finally {
@@ -246,6 +256,37 @@ export function usePipeline(
         const flagged = outcome.flagged.length ? ` · ${outcome.flagged.length} approved segment(s) changed and need review` : '';
         setNotice({ title: `Planned ${outcome.planned.length} segment(s)`, message: `Kept ${outcome.kept.length} unchanged or decided${flagged}.`, tone: 'success' });
       });
+    },
+    [run, update]
+  );
+
+  const generateWithClaude = useCallback(
+    async ({ allowReplan, references }: { allowReplan: string[]; references: PlanReferences }) => {
+      const done = await run('claude', async (progress, onCancel) => {
+        progress(null, 'Waiting for Claude… (one request; nothing is retried automatically)');
+        const p = project();
+        const jobId = `claude-${uuid()}`;
+        onCancel(() => void api!.cancelPlan(jobId));
+        const outcome = unwrap(await api!.planProject({ ...planningInput(p, presetsRef.current), allowReplan, useModel: true, references, jobId }));
+        update((current) => ({
+          ...applyUpdates(current, outcome.updates),
+          planning: { variety: current.planning?.variety ?? 'balanced', plannedAt: new Date().toISOString(), findings: outcome.findings.map((f) => f.message) },
+        }));
+        const planned = new Set(outcome.planned);
+        const fromClaude = outcome.updates.filter((u) => planned.has(u.id) && u.plan.source === 'model').length;
+        const local = outcome.planned.length - fromClaude;
+        const r = outcome.run;
+        const tokens = r ? `${r.calls} request(s) · ${r.inputTokens.toLocaleString()} input / ${r.outputTokens.toLocaleString()} output tokens · estimated ${usd(r.estimatedCost)}` : '';
+        const cached = r?.cachedRequests ? ` · ${r.cachedRequests} answered from earlier identical requests (not sent, not billed)` : '';
+        const localNote = local ? ` ${local} row(s) kept a local suggestion where it fitted better or Claude gave none.` : '';
+        setNotice({
+          title: `Claude suggested visuals for ${fromClaude} segment(s)`,
+          message: `${tokens}${cached}.${localNote} Review each row, then approve.`,
+          tone: 'success',
+        });
+        return true;
+      });
+      return done === true;
     },
     [run, update]
   );
@@ -407,6 +448,7 @@ export function usePipeline(
     probeSource,
     transcribe,
     suggest,
+    generateWithClaude,
     act,
     setStatus,
     renderPreview,

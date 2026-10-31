@@ -427,7 +427,7 @@ export default function PresetEditor() {
                   </div>
                 </Field>
 
-                <Field label="Local reference files" optional hint="Files stay where they are on disk — Edissistant only stores their location.">
+                <Field label="Local reference files" optional hint="Videos and images stay where they are on disk; Edissistant only stores their location. Videos are never uploaded. An image is sent to Claude only if you tick it for a run.">
                   <div className="flex flex-col gap-2.5">
                     {form.referenceFiles.map((file) => (
                       <div key={file} className="flex min-h-14 items-center gap-3.5 rounded-[12px] border border-line bg-surface-2 py-2 pr-2 pl-4">
@@ -452,13 +452,13 @@ export default function PresetEditor() {
                       type="button"
                       disabled={!isElectron}
                       onClick={async () => {
-                        const files = await window.electronAPI?.openFiles({ kind: 'video', multiple: true, title: 'Select reference videos' });
+                        const files = await window.electronAPI?.openFiles({ kind: 'reference', multiple: true, title: 'Select reference videos or images' });
                         if (files?.length) update('referenceFiles', Array.from(new Set([...form.referenceFiles, ...files])));
                       }}
                       className="flex min-h-[88px] flex-col items-center justify-center gap-2 rounded-[14px] border border-dashed border-line-strong text-[13.5px] text-ink-2 transition-colors hover:border-ink-4 hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <IconUpload size={20} />
-                      {isElectron ? 'Choose video files…' : 'File selection is available in the desktop app'}
+                      {isElectron ? 'Choose videos or images…' : 'File selection is available in the desktop app'}
                     </button>
                   </div>
                 </Field>

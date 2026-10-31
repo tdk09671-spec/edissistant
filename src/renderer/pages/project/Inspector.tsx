@@ -6,6 +6,7 @@ import { formatClock, formatPrecise, formatTimecode, parseTime } from '../../lib
 import { fileName, isElectron } from '../../lib/project';
 import { instructionPending, TIMING_MODE_LABEL } from '../../lib/pipeline';
 import { snapVisualTiming, visualTimingIssue } from '../../../shared/pipeline/convert';
+import { ClaudeRunDialog } from './ClaudeRunDialog';
 import { frameToSeconds, secondsToFrames } from '../../../shared/animation/timeline';
 import {
   Badge,
@@ -222,6 +223,7 @@ const BUILD_LABEL: Record<SegmentBuildResult['status'], string> = {
 function SuggestionPanel({ segment, pipeline, buildResult }: { segment: Segment; pipeline: Pipeline; buildResult?: SegmentBuildResult }) {
   const plan = segment.plan;
   const busy = Boolean(pipeline.job);
+  const [askClaude, setAskClaude] = useState(false);
   if (!plan) {
     return (
       <div className="rounded-[12px] border border-dashed border-line-strong p-4">
@@ -229,7 +231,7 @@ function SuggestionPanel({ segment, pipeline, buildResult }: { segment: Segment;
           <IconSparkle size={17} className="mt-0.5 shrink-0 text-ink-3" />
           <p className="text-[13px] leading-relaxed text-ink-3">
             {segment.transcript.trim()
-              ? 'No suggestion yet. Run Suggest visuals to plan this segment from the client preset. Planning runs locally; no AI service is called.'
+              ? 'No suggestion yet. Run Suggest visuals to plan it locally from the client preset (free, nothing leaves this computer), or Generate with Claude.'
               : 'Add the transcript for this segment to get a suggestion.'}
           </p>
         </div>
@@ -357,7 +359,15 @@ function SuggestionPanel({ segment, pipeline, buildResult }: { segment: Segment;
             </Button>
           </span>
         </Tooltip>
+        <Tooltip content="Ask Claude for an idea for this segment only. You’ll see what is sent and the estimated cost first.">
+          <span>
+            <Button size="sm" variant="ghost" data-testid="ask-claude" icon={<IconSparkle size={14} />} disabled={busy || !window.electronAPI} onClick={() => setAskClaude(true)}>
+              Ask Claude
+            </Button>
+          </span>
+        </Tooltip>
       </div>
+      {askClaude && <ClaudeRunDialog open segmentId={segment.id} onClose={() => setAskClaude(false)} />}
     </div>
   );
 }

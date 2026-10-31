@@ -131,7 +131,14 @@ export function SequenceTable({ segments, numbering, fps, selectedId, activeId, 
               <td className="border-b border-line px-3 py-3.5">
                 {plan ? (
                   <div className="flex flex-col gap-0.5" data-testid="row-suggestion">
-                    <p className="truncate font-medium text-ink">{plan.conceptLabel}</p>
+                    <p className="flex items-center gap-1.5 truncate font-medium text-ink">
+                      <span className="truncate">{plan.conceptLabel}</span>
+                      {plan.source === 'model' && !plan.editorChoice && (
+                        <span data-testid="row-source-claude" className="shrink-0 rounded-full bg-signal-soft px-1.5 text-[10.5px] font-medium text-signal">
+                          Claude
+                        </span>
+                      )}
+                    </p>
                     <p className="line-clamp-2 text-[12.5px] leading-relaxed text-ink-3">
                       {plan.stale ? 'Changed after approval: review it' : !plan.renderable ? plan.unsupportedReason : plan.reasoning}
                     </p>

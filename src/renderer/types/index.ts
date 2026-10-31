@@ -225,7 +225,7 @@ export interface ElectronAPI extends RenderBridgeAPI, PipelineBridgeAPI {
   getSecretStatus: () => Promise<SecretStatus>;
   setSecret: (name: 'claudeApiKey', value: string) => Promise<boolean>;
   deleteSecret: (name: 'claudeApiKey') => Promise<boolean>;
-  openFiles: (options: { kind?: 'video' | 'media' | 'captions' | 'image'; multiple?: boolean; title?: string }) => Promise<string[]>;
+  openFiles: (options: { kind?: 'video' | 'media' | 'captions' | 'image' | 'reference'; multiple?: boolean; title?: string }) => Promise<string[]>;
   openDirectory: (options: { title?: string; defaultPath?: string }) => Promise<string | null>;
   readTextFile: (filePath: string) => Promise<string>;
   saveTextFile: (options: { defaultPath?: string; content: string; extensions?: string[]; name?: string }) => Promise<string | null>;

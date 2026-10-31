@@ -5,6 +5,7 @@ import { SequenceTable } from '../../components/SequenceTable';
 import { PipelineStatus } from '../../components/PipelineStatus';
 import { DirectionPanel, SegmentInspector, SourcePanel } from './Inspector';
 import { useProjectMedia } from './useProjectMedia';
+import { ClaudeRunDialog } from './ClaudeRunDialog';
 import { createSegment, getSegments, mediaUrl, segmentAt } from '../../lib/project';
 import { formatClock } from '../../lib/time';
 import {
@@ -53,6 +54,7 @@ export default function Workspace() {
   const probeSource = pipeline.probeSource;
   const media = useProjectMedia(project, update, setSelectedSegmentId, useCallback(() => void probeSource(), [probeSource]));
   const [confirmTranscribe, setConfirmTranscribe] = useState(false);
+  const [claudeOpen, setClaudeOpen] = useState(false);
   const [view, setView] = useState<'source' | 'preview'>('source');
   const [previewExists, setPreviewExists] = useState(false);
   const previewPath = project.render?.previewPath;
@@ -410,6 +412,13 @@ export default function Workspace() {
             <Button size="sm" variant="secondary" icon={<IconSparkle size={15} />} disabled={!hasTranscript || busy || !window.electronAPI} onClick={() => void pipeline.suggest()}>
               Suggest visuals
             </Button>
+            <Tooltip content="Ask Claude for ideas. You’ll see what is sent and the estimated cost before anything leaves this computer.">
+              <span tabIndex={!hasTranscript || busy ? 0 : -1}>
+                <Button size="sm" variant="secondary" data-testid="generate-claude" icon={<IconSparkle size={15} />} disabled={!hasTranscript || busy || !window.electronAPI} onClick={() => setClaudeOpen(true)}>
+                  Generate with Claude
+                </Button>
+              </span>
+            </Tooltip>
             <Tooltip content={approvedGraphics ? `Render ${approvedGraphics} approved graphic(s) over the source` : 'Approve suggestions to render them'}>
               <span tabIndex={approvedGraphics ? -1 : 0}>
                 <Button size="sm" variant="secondary" icon={<IconPlay size={15} />} disabled={!project.source || !approvedGraphics || busy || !window.electronAPI} onClick={() => void pipeline.renderPreview()}>
@@ -516,6 +525,7 @@ export default function Workspace() {
           void pipeline.transcribe();
         }}
       />
+      {claudeOpen && <ClaudeRunDialog open onClose={() => setClaudeOpen(false)} />}
     </div>
   );
 }
