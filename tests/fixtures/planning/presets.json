@@ -1,0 +1,22 @@
+{
+  "northwind": {
+    "id": "preset-northwind",
+    "name": "Northwind founder series",
+    "clientName": "Northwind Studio",
+    "creativeBrief": "Dark cinematic typography with film grain. Calm, elegant motion. Data-driven: charts are welcome when there are numbers. No bouncy motion.",
+    "fonts": "Playfair Display Bold, Inter Medium",
+    "tracking": "+50",
+    "logoPath": "/brand/northwind/logo.png",
+    "brandingNotes": "Gold accents only. Underlines for key phrases.",
+    "brandColors": ["#e9c46a", "#f4a261"]
+  },
+  "lumen": {
+    "id": "preset-lumen",
+    "name": "Lumen explainers",
+    "clientName": "Lumen Health",
+    "creativeBrief": "Clean, minimal paper texture look over a warm background. Punchy and energetic. No charts. No typewriter text.",
+    "fonts": "Inter Bold",
+    "tracking": "tight",
+    "brandColors": ["#2a6df4"]
+  }
+}
