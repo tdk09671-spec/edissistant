@@ -42,4 +42,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // App
   getAppInfo: () => ipcRenderer.invoke('app:info'),
+
+  // Animation rendering (FFmpeg + sandboxed engine)
+  getRenderStatus: () => ipcRenderer.invoke('render:status'),
+  renderSegment: (jobId: string, spec: unknown, options?: unknown) => ipcRenderer.invoke('render:segment', jobId, spec, options),
+  renderSequence: (jobId: string, sequence: unknown, options?: unknown) => ipcRenderer.invoke('render:sequence', jobId, sequence, options),
+  cancelRender: (jobId: string) => ipcRenderer.invoke('render:cancel', jobId),
+  exportRender: (sourcePath: string, destinationDir: string, fileName: string) => ipcRenderer.invoke('render:export', sourcePath, destinationDir, fileName),
+  clearRenderCache: () => ipcRenderer.invoke('render:clearCache'),
+  onRenderProgress: (callback: (progress: unknown) => void) => {
+    const listener = (_event: unknown, progress: unknown) => callback(progress);
+    ipcRenderer.on('render:progress', listener);
+    return () => {
+      ipcRenderer.removeListener('render:progress', listener);
+    };
+  },
 });
