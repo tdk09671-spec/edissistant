@@ -103,10 +103,11 @@ Linux cloud container, Node 22.22, FFmpeg 6.1.1, Electron 45 under `xvfb-run -a`
 
 **Windows 11 (2026-10-29)**: `npm run test:unit` 137/137 (130 + 7 regression tests from the Windows
 validation), `npx playwright test` 27/27, typecheck and build pass. Results, fixes and measurements:
-[docs/RENDERING.md](docs/RENDERING.md#windows-11-2026-10-29). Editing-application import is still unverified.
+[docs/RENDERING.md](docs/RENDERING.md#windows-11-2026-10-29). Manual import into Premiere Pro (18/18),
+After Effects (5/5) and DaVinci Resolve (5/5) passed: [docs/RENDERING.md](docs/RENDERING.md#editing-applications-manual).
 
 - `npm run test:unit`: 130/130 (36 existing + 94 new in `tests/unit/animation` and `tests/unit/render`). Render tests use real FFmpeg with a synthetic frame source and are skipped when `ffmpeg`/`ffprobe` aren't on `PATH`.
 - `xvfb-run -a npx playwright test`: 27/27 (18 existing + 9 in `tests/e2e/rendering.spec.ts`, which render through the real sandboxed engine and verify outputs by decoding them with FFmpeg).
 - Fixtures: `tests/fixtures/animation/*.json` (specs only, no media).
 
-Coverage, performance numbers and the Windows/NLE/GPU checks still needed are listed in [docs/RENDERING.md](docs/RENDERING.md#test-status).
+Coverage, performance numbers, known limitations and the checks still needed are listed in [docs/RENDERING.md](docs/RENDERING.md#test-status).

@@ -5,10 +5,11 @@ captions, renders them locally with FFmpeg, re-renders only what changed, and co
 of the whole timeline. No AI API is called. The renderer only consumes JSON specs that a planner (the
 future Claude planning engine, or a person) produces.
 
-> **Status: working core, verified on Linux only.** Everything below marked ✅ was run in this cloud
-> container: real Chromium drew the frames, real FFmpeg encoded them, and FFmpeg decoded them again
-> to check pixels and alpha. Nothing has been run on Windows or macOS, in an NLE, or on a GPU.
-> See [What still needs Windows validation](#what-still-needs-windows-validation).
+> **Status: verified on Linux and Windows 11, and in Premiere Pro, After Effects and DaVinci Resolve.**
+> Real Chromium drew the frames, real FFmpeg encoded them, and FFmpeg decoded them again to check
+> pixels and alpha ([Windows 11](#windows-11-2026-10-29)). The outputs were then imported into the three
+> editing applications by hand ([Editing applications](#editing-applications-manual)). macOS and Final Cut
+> Pro are untested. See [Known limitations](#known-limitations) and [Still untested](#still-untested).
 
 ## Pipeline
 
@@ -175,9 +176,13 @@ Planners compose these primitives freely. A new look normally needs only a new s
 - **"Black is not transparency"** is enforced twice. The validator rejects non-transparent backgrounds in
   transparent modes. `verifyAlpha()` decodes frames and reports `transparencySurvives`, and an opaque black
   ProRes 4444 render is tested to report `false`.
-- YUV outputs use the Rec. 709 matrix and are tagged bt709/tv range. RGB formats stay RGB.
-- **Alpha is straight (unpremultiplied).** NLE interpretation (straight vs premultiplied) still has to be
-  checked in each application. See below.
+- YUV outputs use the Rec. 709 matrix, limited (tv) range, and carry bt709 primaries, transfer and matrix
+  tags. The range *flag* is only written to H.264 (.mp4) and VP9 (.webm): QuickTime's `colr` atom (`nclc`)
+  in the ProRes .mov files has no range field, so FFprobe reports `color_range=unknown` for them. ProRes is
+  limited range by convention, and Premiere Pro, After Effects and Resolve all read it that way. RGB formats
+  (Animation, PNG-MOV) stay RGB and carry no color tags.
+- **Alpha is straight (unpremultiplied).** Premiere Pro, After Effects and Resolve interpret it as straight
+  (see [Editing applications](#editing-applications-manual)).
 - Every render is validated before it is cached: codec, width/height, exact frame rate, exact frame count
   (packet count) and alpha pixel format. Failures raise `OUTPUT_INVALID`.
 
@@ -317,7 +322,31 @@ Fixed during Windows validation: missing Rec. 709 tags with FFmpeg 7+; a test th
 failures (e.g. > 4096 px) now fall back to `libx264`; an FFmpeg exit while frames were queued surfaced as a raw
 `EPIPE`/`EOF` instead of `ENCODE_FAILED`; preview composition memory (one decoder thread per clip:
 24 × 1080p segments 10.8 → 4.5 GB); `mask.feather` was typed but not supported; keyframe easing semantics
-documented and the fixtures corrected.
+documented and the fixtures corrected. Pre-merge: the sandbox-probe E2E test rendered only 6 s, so the
+render could finish before the cancel arrived (intermittent `ok: true`). It now uses 60 s and passed 20/20
+repeated runs.
+
+### Editing applications (manual)
+
+Checked by hand on Windows 11, recorded 2026-10-30, with a synthetic test package rendered by this engine
+(no client media): frame-numbered slates in ProRes 4444, ProRes 422 HQ, Animation and PNG-MOV at 25, 29.97
+and 23.976 fps; a lower third and captions in the three alpha formats; a full-frame graphic; and a
+synthetic H.264 background plate.
+
+| Application | Checks passed |
+| --- | --- |
+| Adobe Premiere Pro | 18 / 18 |
+| Adobe After Effects | 5 / 5 |
+| DaVinci Resolve | 5 / 5 |
+
+Passed areas: transparency (straight alpha, plate visible through transparent areas), graphic edges (no
+dark or bright halos), visual color match, frame-rate detection, animation timing, and the tested
+playback behavior. In Premiere Pro, the audio waveform of the 60 s preview was also checked against the
+source footage's audio and stayed aligned. That shows the preview keeps the source audio unshifted. It is
+not a lip-sync test: the synthetic source is a continuous tone with no sync markers.
+
+Application version numbers were not recorded. Not covered: Final Cut Pro (macOS), VP9 WebM in editing
+applications (a browser format), and audio alignment in After Effects and Resolve.
 
 ## Performance (Windows 11, Ryzen 7 3800XT, RTX 3070)
 
@@ -354,16 +383,30 @@ over IPC, `getImageData`, and ProRes encoding (single FFmpeg process). Next step
 `MessagePort`/shared-memory transfer, rendering in an `OffscreenCanvas` worker, rendering segments in parallel
 sandboxes, and keeping one warm sandbox between renders (each render opens a new one: ~0.3–0.5 s).
 
+**Fixed after the Windows run: preview placement at NTSC rates.** The preview composer wrote each segment's start
+and end as seconds with 6 decimals. Where that rounded up past the frame's exact time (e.g. 1.064 s at
+24000/1001 snaps to frame 26 = 1.0844166…s), the segment appeared one frame late and lost its last frame. Start
+times whose 6-decimal form rounds down were unaffected, which is why the Windows check above passed. Clips are
+now stamped by frame number in the sequence's exact frame time base (`settb=1001/30000,setpts=N+first`).
+`tests/unit/render/compose.test.ts` checks every frame with real FFmpeg at 24000/1001 and 30000/1001. Segment
+renders, alpha and audio are unchanged.
+
+## Known limitations
+
+- **Preview composition memory grows with the number of segments**: about 165 MB per 1080p segment
+  (48 segments ≈ 8 GB), even after the decoder-thread fix. Compose very long timelines in batches.
+- **GPU encoding can't be turned off.** A validated hardware H.264 encoder (e.g. NVENC) is always used for
+  previews and `h264-mp4`. The app's hardware-acceleration setting doesn't affect it. A failed hardware
+  encode still falls back to `libx264` automatically.
+- **Fractional frame rates: layer start/end edge case.** Layer `start`/`end` times are compared without
+  tolerance, so a time computed as `frame / 29.97` (a few µs late) starts the layer one frame later than
+  `frame × 1001 / 30000`. Planners and specs should snap times to the frame grid.
+
 ## Still untested
 
-- **NLE compatibility (not verified in any editing application)**: ProRes 4444 / Animation / PNG-MOV in
-  Premiere Pro, After Effects, DaVinci Resolve and Final Cut Pro: alpha interpretation, Rec. 709 colour match,
-  frame rate and length. FFmpeg confirms straight alpha, tags and exact frame counts; the applications have
-  not been checked.
+- Final Cut Pro and macOS: Homebrew FFmpeg discovery, `h264_videotoolbox`.
 - Intel QSV and AMD AMF on real hardware; real brand fonts beyond the Windows system fonts.
-- Layer `start`/`end` times are compared without tolerance: a time computed as `frame / 29.97` (a few µs
-  late) starts the layer one frame later than `frame × 1001 / 30000`. Snapping to the frame grid is suggested.
-- Packaged builds; macOS: Homebrew FFmpeg discovery, `h264_videotoolbox`, Final Cut Pro.
+- Packaged builds.
 
 ## Deferred
 
