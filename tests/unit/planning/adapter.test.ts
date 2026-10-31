@@ -155,3 +155,40 @@ describe('animation spec adapter', () => {
     expect(r.status === 'renderable' && PR2_ID.test(r.spec.id)).toBe(true);
   });
 });
+
+describe('caption regressions (found by the end-to-end integration run)', () => {
+  // PR #2 rejects a captions layer whose cue or word ends after the segment (INVALID_SPEC).
+  const captionSeg = (start: number, end: number, words?: { text: string; start: number; end: number }[], text = 'This is The Cutting Room, the podcast for people who edit for a living.') =>
+    ({ segmentId: 'c1', start, end, text, words, conceptId: 'caption-emphasis', visualMode: 'captions', params: {}, transition: 'fade', status: 'approved' }) as const;
+  const cuesOf = (r: ReturnType<typeof adaptSegment>) => {
+    if (r.status !== 'renderable') throw new Error(r.status);
+    return { duration: r.spec.duration, style: (r.spec.layers[0].props as { style: { highlightColor: string } }).style, cues: (r.spec.layers[0].props as { cues: { end: number; words?: { end: number }[] }[] }).cues };
+  };
+
+  it('cues and words never end after the segment, even when rounding to 0.01 s would push them past it', () => {
+    // Segment 0.8–4.965 s (D = 4.165 s); transcription word timing isn't rounded like the segment is.
+    const text = 'This is The Cutting Room, the podcast for people who edit for a living.';
+    const words = text.split(' ').map((w, i, all) => ({ text: w, start: 0.8 + (4.1654 * i) / all.length, end: 0.8 + (4.1654 * (i + 1)) / all.length }));
+    for (const fps of [25, 23.976, 29.97]) {
+      for (const input of [words, undefined]) {
+        const { duration, cues } = cuesOf(adaptSegment(captionSeg(0.8, 4.965, input), profile(), { width: 1920, height: 1080, fps }));
+        expect(duration).toBe(4.165);
+        expect(cues.length).toBeGreaterThan(1);
+        for (const c of cues) {
+          expect(c.end).toBeLessThanOrEqual(duration);
+          for (const w of c.words ?? []) expect(w.end).toBeLessThanOrEqual(c.end);
+        }
+      }
+    }
+  });
+
+  it('highlights with a brand colour that reads on dark footage, not a near-black one', () => {
+    const p = profile();
+    const withAccents = (accents: string[]) => ({ ...p, palette: { ...p.palette, value: { ...p.palette.value, accents } } });
+    const seg = captionSeg(0, 2, undefined, 'New episodes every Tuesday.');
+    expect(cuesOf(adaptSegment(seg, withAccents(['#111216', '#e9a94b']), { width: 1920, height: 1080, fps: 25 })).style.highlightColor).toBe('#e9a94b');
+    expect(cuesOf(adaptSegment(seg, withAccents(['#111216']), { width: 1920, height: 1080, fps: 25 })).style.highlightColor).toBe('#ffd166');
+    // An editor-chosen accent is used when it is readable.
+    expect(cuesOf(adaptSegment({ ...seg, params: { accent: '#ff6600' } }, withAccents(['#111216']), { width: 1920, height: 1080, fps: 25 })).style.highlightColor).toBe('#ff6600');
+  });
+});

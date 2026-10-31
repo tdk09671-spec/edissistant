@@ -338,9 +338,15 @@ that id, then compare `costReport` with the Console usage page.
 
 ## Integration requirements for PR #1 and PR #2
 
-These were checked against the latest heads of both PRs on 2026-10-29: PR #1
+These were checked against the latest heads of both PRs on 2026-10-31: PR #1
 [`143ea40`](https://github.com/tdk09671-spec/edissistant/pull/1) and PR #2
-[`343542c`](https://github.com/tdk09671-spec/edissistant/pull/2). Re-check them if either PR gets new commits.
+[`178c793`](https://github.com/tdk09671-spec/edissistant/pull/2). Re-check them if either PR gets new commits.
+
+What changed in PR #2 since the first check (`343542c`), and what it means here:
+
+- **`ea4e5e7`, `24eea78`.** Windows validation fixes. `Mask` lost the unsupported `feather` field. The adapter never emits it, and `pr2Compat.test.ts` passes against PR #2's validator at `178c793` (2/2).
+- **`82a15b7`, `b07dffd`.** Docs, NLE results, and the cancellation-test race fix. No contract change.
+- **`fcb68d4`.** Preview composition places segments by frame number at NTSC rates. Before it, a segment whose snapped start time rounded up in 6 decimals appeared one frame late in the preview. Specs from this adapter already start on millisecond times, which PR #2 snaps to the frame grid. No change is needed here.
 
 **Merge compatibility:**
 - This branch only adds files, apart from four shared edits:
@@ -360,7 +366,7 @@ These were checked against the latest heads of both PRs on 2026-10-29: PR #1
 
 | Requirement | Detail |
 | --- | --- |
-| Input contract | `TranscriptSentence { id, start, end, text, words: { text, start, end, confidence? }[], edited? }` from `src/shared/transcription/types.ts`. Times are in seconds from the start of the media. `compat.ts` mirrors it field for field (checked at `143ea40`). |
+| Input contract | `TranscriptSentence { id, start, end, text, words: { text, start, end, confidence? }[], edited? }` from `src/shared/transcription/types.ts`. Times are in seconds from the start of the media. `compat.ts` mirrors it field for field (checked at `143ea40`, 2026-10-31). |
 | Conversion | `fromTranscriptSentences(transcript.sentences, clipOffsetSeconds)` → `PlanningSegmentInput[]`. Empty sentences are dropped. Word timings are kept for captions. The editor's text is used as-is. |
 | Existing UI segments | `fromProjectSegments(project.segments)`. A stored `visualMode` is only a lock once the segment is approved. |
 | Write-back | `toProjectSegmentUpdates(plan)` sets `aiSuggestion` and `status`. It sets `visualMode` only for approved segments (`background-graphics` → `motion-graphics`). It never touches `transcript`, timing or `instruction`. |
@@ -371,7 +377,7 @@ These were checked against the latest heads of both PRs on 2026-10-29: PR #1
 
 | Requirement | Detail |
 | --- | --- |
-| Output contract | `AnimationSpec` v1 and `SequenceSpec`, using PR #2's component names. `compat.ts` mirrors them (checked at `343542c`). |
+| Output contract | `AnimationSpec` v1 and `SequenceSpec`, using PR #2's component names. `compat.ts` mirrors them (checked at `178c793`, 2026-10-31). |
 | Validation | `tests/unit/planning/pr2Compat.test.ts` runs PR #2's own validator on adapter output as soon as `src/shared/animation/validate.ts` exists. It has passed 2/2 in both the trial merge and the scratch worktree. |
 | Rendering | Pass `toSequenceSpec(...)` to `RenderService.renderSequence(sequence, options, handlers)`, or one `renderable` result to `renderSegment`. From the renderer, use `window.electronAPI.renderSequence(jobId, sequence, options)` (IPC `render:sequence` / `render:segment`). PR #2 validates every spec again. |
 | Fonts | Brand fonts must be installed, or PR #2 fails with `FONT_NOT_FOUND` (by design). For previews only, call `planToAnimationSpecs(…, { allowFontFallback: true })`. |
