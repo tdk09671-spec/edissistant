@@ -7,6 +7,7 @@
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { fpsRational } from '../../shared/animation/timeline';
 import type { ExportFormatId } from '../../shared/animation/types';
@@ -16,9 +17,13 @@ import { SceneHost, type SceneHostOptions } from './client';
 import { encodePng } from './png';
 import { subframeTimes, type MotionBlur } from './pixels';
 import { SceneError, type SceneInfo, type SceneJob } from './protocol';
+import { registerPartial } from './recovery';
+
+/** Where Edissistant records in-progress partial outputs (for crash recovery). The app passes userData. */
+export const DEFAULT_STATE_DIR = path.join(os.tmpdir(), 'edissistant-scene-state');
 
 /** Bump when anything that changes rendered pixels changes (host, shim, accumulation, camera). */
-export const SCENE_RENDERER_VERSION = 'scene-1';
+export const SCENE_RENDERER_VERSION = 'scene-2'; // scene-2: hardened page (sandbox CSP, shim removals)
 
 export interface AnimationSettings {
   fps: number;
@@ -68,8 +73,9 @@ export function frameTotal(duration: number, fps: number): number {
 }
 
 /** Renders PNG stills at scene times (seconds). Returns the written paths. */
-export async function renderStills(host: SceneHostOptions, job: SceneJob, times: number[], outDir: string, name = 'still'): Promise<{ files: string[]; info: SceneInfo }> {
+export async function renderStills(host: SceneHostOptions, job: SceneJob, times: number[], outDir: string, name = 'still', onHost?: (host: SceneHost) => void): Promise<{ files: string[]; info: SceneInfo }> {
   const h = new SceneHost(host);
+  onHost?.(h);
   try {
     await h.start();
     const info = await h.open(job);
@@ -94,12 +100,13 @@ export async function renderAnimation(
   job: SceneJob,
   settings: AnimationSettings,
   target: AnimationTarget,
-  opts: { cacheDir?: string; onProgress?: (done: number, total: number) => void } = {}
+  opts: { cacheDir?: string; stateDir?: string; onProgress?: (done: number, total: number) => void; onHost?: (host: SceneHost) => void } = {}
 ): Promise<AnimationResult> {
   const fingerprint = sceneFingerprint(job, settings, target.format);
   const ext = target.format === 'h264-mp4' ? 'mp4' : 'mov';
   const cached = opts.cacheDir ? path.join(opts.cacheDir, `${fingerprint}.${ext}`) : null;
   const h = new SceneHost(host);
+  opts.onHost?.(h);
   try {
     await h.start();
     const info = await h.open(job);
@@ -118,7 +125,8 @@ export async function renderAnimation(
     const frameDur = frameTime(1, settings.fps);
     const frameMs: number[] = [];
     fs.mkdirSync(path.dirname(target.output), { recursive: true });
-    const partial = `${target.output}.partial.${ext}`;
+    // A uniquely named partial, registered first, so a crash can be cleaned up without guessing.
+    const { partial, done } = registerPartial(opts.stateDir ?? DEFAULT_STATE_DIR, target.output, ext);
     try {
       await encodeFrames(
         target.ffmpeg,
@@ -136,6 +144,7 @@ export async function renderAnimation(
       );
       const metadata = await validateOutput(target.ffprobe, partial, expected);
       fs.renameSync(partial, target.output);
+      done();
       if (cached) {
         fs.mkdirSync(path.dirname(cached), { recursive: true });
         fs.copyFileSync(target.output, cached);
@@ -143,6 +152,7 @@ export async function renderAnimation(
       return { output: target.output, frames: count, info, metadata, fingerprint, cached: false, frameMs, hostVersions: h.versions };
     } catch (e) {
       fs.rmSync(partial, { force: true });
+      done();
       throw e;
     }
   } finally {

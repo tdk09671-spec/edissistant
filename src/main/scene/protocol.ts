@@ -1,8 +1,8 @@
 // The render job and the wire protocol between the app and the render host process.
 //
-// Framing (stdin/stdout of the host): "EDSH" magic, 4-byte big-endian header length, JSON header,
-// then `header.bin` raw bytes (0 if none). The magic makes stray output on stdout a hard error
-// instead of silent corruption.
+// Framing (over the authenticated socket in ipc.ts, never stdin/stdout): "EDSH" magic, 4-byte big-endian
+// header length, JSON header (with the job id), then `header.bin` raw bytes (0 if none). Header and
+// payload sizes are capped; anything malformed is a hard error, never silently skipped.
 
 export type SceneAdapter =
   /** A static design (no animation): captured as PNG stills at t = 0. */
@@ -66,7 +66,7 @@ export interface SceneInfo {
 
 export type HostCommand =
   | { type: 'file'; path: string; bin: number }
-  | { type: 'open'; job: Omit<SceneJob, 'files'>; limits: SceneLimits; token: string }
+  | { type: 'open'; job: Omit<SceneJob, 'files'>; limits: SceneLimits }
   /** Capture at scene time `t` (seconds), averaging `times` (absolute scene times) if more than one. */
   | { type: 'capture'; id: number; times: number[]; postCamera: boolean }
   /** Test hook: returns JSON of the page's `window.__probe` (a plain value the page chose to expose). */
@@ -116,7 +116,16 @@ export class MessageReader {
   private size = 0;
   private header: (Record<string, unknown> & { bin?: number }) | null = null;
 
-  constructor(private readonly maxHeader = 1 << 20) {}
+  constructor(
+    private readonly maxHeader = 1 << 20,
+    /** Largest binary payload accepted (bounded buffering); larger declarations are protocol errors. */
+    private readonly maxBinary = 512 * 1024 * 1024
+  ) {}
+
+  /** Bytes received but not yet part of a complete message. */
+  get buffered(): number {
+    return this.size;
+  }
 
   push(chunk: Buffer): { header: Record<string, unknown>; bin: Buffer | null }[] {
     this.chunks.push(chunk);
@@ -134,6 +143,7 @@ export class MessageReader {
         this.header = JSON.parse(this.take(len).toString('utf8'));
       }
       const need = typeof this.header!.bin === 'number' ? this.header!.bin : 0;
+      if (!Number.isInteger(need) || need < 0 || need > this.maxBinary) throw new Error('Render host protocol error (payload size out of range).');
       if (this.size < need) break;
       const bin = need ? this.take(need) : null;
       out.push({ header: this.header!, bin });

@@ -1,4 +1,5 @@
-// Injected into the scene page before any of its own scripts (CDP addScriptToEvaluateOnNewDocument).
+// Injected into the scene page, and every frame it creates, before any of its own scripts
+// (CDP Page.addScriptToEvaluateOnNewDocument).
 // Makes a frame a pure function of scene time:
 //  - Date, performance.now and requestAnimationFrame timestamps follow the virtual clock;
 //  - setTimeout / setInterval / requestAnimationFrame callbacks run only when a frame is drawn, in a
@@ -71,5 +72,12 @@ export function determinismShim(seed: number): string {
     get time() { return V.t; },
   };
   Object.defineProperty(window, '__edissistant', { value: Object.freeze(api), writable: false, configurable: false });
+  // Second layer (the first is the host: CSP sandbox, Chromium switches, permission handlers): no printing,
+  // no WebRTC, no WebGPU, in this frame and every frame it creates (this script runs in all frames).
+  try { def('print', () => undefined); } catch (e) {}
+  for (const n of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel', 'RTCIceCandidate', 'RTCSessionDescription', 'RTCRtpSender', 'RTCRtpReceiver', 'RTCRtpTransceiver', 'RTCDtlsTransport', 'RTCIceTransport', 'RTCSctpTransport', 'RTCCertificate', 'RTCEncodedAudioFrame', 'RTCEncodedVideoFrame']) {
+    try { Object.defineProperty(window, n, { value: undefined, writable: false, configurable: false }); } catch (e) {}
+  }
+  try { Object.defineProperty(Navigator.prototype, 'gpu', { get: () => undefined, configurable: false }); } catch (e) {}
 })();`;
 }

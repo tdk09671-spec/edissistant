@@ -1,15 +1,23 @@
-// App side of the render host: starts the host process, sends one job, pulls frames, and always
-// cleans up (kills the process, deletes its temporary data folder).
+// App side of the render host: starts the host process, talks to it over a dedicated authenticated
+// socket (see ipc.ts), pulls frames, and always cleans up safely.
 //
 // The host gets a scrubbed environment (display and system variables only: no API keys, no app
-// variables, no NODE_OPTIONS) and an empty data folder of its own, so it shares nothing with the app.
+// variables, no NODE_OPTIONS) and an empty job folder of its own, so it shares nothing with the app.
+// stdin is not used; stdout and stderr are collected as diagnostics only, never parsed as protocol.
+//
+// Process ownership (see processes.ts): the host and its helpers are recorded by PID + start time while
+// the job runs; the host is stopped through its ChildProcess handle; leftovers are killed only after their
+// identity is re-confirmed. No PID-only, tree or process-group kills.
 
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'child_process';
-import * as crypto from 'crypto';
+import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
+import type * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
-import { DEFAULT_LIMITS, encodeMessage, MessageReader, SceneError, type HostMessage, type SceneInfo, type SceneJob, type SceneLimits } from './protocol';
+import { IpcChannel, listenForHost, newIpcConfig, writeIpcFile, type IpcConfig } from './ipc';
+import { killVerified, listProcesses, ownedTree, stillRunning, type CleanupReport, type OwnedProcess } from './processes';
+import { DEFAULT_LIMITS, SceneError, type HostMessage, type SceneInfo, type SceneJob, type SceneLimits } from './protocol';
+import { JOB_DIR_PREFIX, writeOwnerMarker } from './recovery';
 
 /** Environment variables the host may inherit. Everything else (keys, tokens, app settings) is dropped. */
 const ENV_ALLOW = [
@@ -24,15 +32,8 @@ export function hostEnvironment(env: NodeJS.ProcessEnv = process.env): Record<st
   return out;
 }
 
-/** Stops whatever is left of the host's process tree (Chromium helpers exit on their own, but late). */
-export function killTree(pid: number): void {
-  try {
-    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-    else process.kill(-pid, 'SIGKILL');
-  } catch {
-    // already gone
-  }
-}
+/** Largest frame accepted from the host (8192 × 8192 RGBA). */
+const MAX_FRAME = 8192 * 8192 * 4;
 
 export interface SceneHostOptions {
   /** The Electron binary (process.execPath in the app; require('electron') in tests). */
@@ -46,34 +47,58 @@ export interface SceneHostOptions {
   proxy?: string;
   /** Renderer JS heap cap in MB. */
   heapMB?: number;
-  /** Tests only: serve pages without the CSP, to check the network layer on its own. */
+  /** Tests only: serve pages without the CSP, to check the other layers on their own. */
   testDisableCsp?: boolean;
+  /** Tests only: fake camera/microphone devices, so permission denial (not "no device") is what's tested. */
+  testFakeMedia?: boolean;
+  /** Tests only: the host writes junk to stdout/stderr before connecting (B2 regression). */
+  testStdoutNoise?: boolean;
   /** Extra environment for the host (tests only). */
   env?: Record<string, string>;
   signal?: AbortSignal;
 }
 
 export class SceneHost {
-  private child: ChildProcessWithoutNullStreams | null = null;
+  private child: ChildProcess | null = null;
   private dataDir = '';
-  private readonly reader = new MessageReader(1 << 20);
+  private channel: IpcChannel | null = null;
+  private server: net.Server | null = null;
   private waiters: { match: (m: HostMessage) => boolean; resolve: (v: { msg: HostMessage; bin: Buffer | null }) => void; reject: (e: Error) => void }[] = [];
   private failure: Error | null = null;
   private nextId = 1;
-  private stderr = '';
+  private diagnostics = '';
   private exited: Promise<void> = Promise.resolve();
+  private hostIdentity: { pid: number; start: string } | null = null;
+  private readonly ownedMap = new Map<string, OwnedProcess>();
+  private closing: Promise<void> | null = null;
   readonly limits: SceneLimits;
+  /** Connections to the job endpoint that were refused (wrong or missing proof). */
+  readonly rejectedClients: string[] = [];
   versions: Record<string, string> = {};
   pid = 0;
   info: SceneInfo | null = null;
+  ipc: IpcConfig | null = null;
+  /** Filled in by close(): what was owned and what happened to each process. */
+  cleanup: CleanupReport | null = null;
 
   constructor(private readonly options: SceneHostOptions) {
     this.limits = { ...DEFAULT_LIMITS, ...options.limits };
   }
 
+  /** Processes owned by this job (host and helpers), by PID + start time. */
+  get owned(): OwnedProcess[] {
+    return [...this.ownedMap.values()];
+  }
+
   async start(): Promise<void> {
     if (this.options.signal?.aborted) throw new SceneError('CANCELLED', 'Cancelled.');
-    this.dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edissistant-scene-'));
+    this.dataDir = fs.mkdtempSync(path.join(os.tmpdir(), JOB_DIR_PREFIX));
+    writeOwnerMarker(this.dataDir);
+    const config = newIpcConfig(this.dataDir);
+    this.ipc = config;
+    writeIpcFile(this.dataDir, config);
+    const { server, accepted } = await listenForHost(config, { timeoutMs: this.limits.loadMs + 10_000, onRejected: (r) => this.rejectedClients.push(r) });
+    this.server = server;
     const args = [
       this.options.hostScript,
       `--scene-host-data=${this.dataDir}`,
@@ -81,35 +106,56 @@ export class SceneHost {
       ...(this.options.gpu ? ['--scene-gpu'] : []),
       ...(this.options.heapMB ? [`--scene-heap=${this.options.heapMB}`] : []),
       ...(this.options.testDisableCsp ? ['--scene-test-no-csp'] : []),
+      ...(this.options.testFakeMedia ? ['--scene-test-fake-media'] : []),
+      ...(this.options.testStdoutNoise ? ['--scene-test-stdout-noise'] : []),
     ];
-    // Its own process group (POSIX), so closing can stop Chromium's helper processes with it.
-    const child = spawn(this.options.electron, args, { env: { ...hostEnvironment(), ...this.options.env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
+    const child = spawn(this.options.electron, args, { env: { ...hostEnvironment(), ...this.options.env }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     this.child = child;
     this.exited = new Promise((resolve) => child.once('exit', () => resolve()));
-    child.stdout.on('data', (chunk: Buffer) => {
-      try {
-        for (const { header, bin } of this.reader.push(chunk)) this.dispatch(header as HostMessage, bin);
-      } catch (e) {
-        this.abort(new SceneError('HOST_FAILED', (e as Error).message));
-      }
-    });
-    child.stderr.on('data', (c: Buffer) => {
-      this.stderr = (this.stderr + c.toString('utf8')).slice(-8000);
-    });
+    // Diagnostics only (Chromium logs, Electron's stray output): never parsed.
+    const collect = (c: Buffer) => {
+      this.diagnostics = (this.diagnostics + c.toString('utf8')).slice(-8000);
+    };
+    child.stdout!.on('data', collect);
+    child.stderr!.on('data', collect);
     child.on('error', (e) => this.abort(new SceneError('HOST_FAILED', `Could not start the render host: ${e.message}`)));
     child.on('exit', (code, signal) => this.abort(new SceneError('HOST_FAILED', `The render host exited (${signal ?? code}).`)));
-    child.stdin.on('error', () => undefined);
     this.options.signal?.addEventListener('abort', () => void this.close(new SceneError('CANCELLED', 'Cancelled.')), { once: true });
+
+    const socket = await Promise.race([
+      accepted,
+      this.exited.then(() => Promise.reject(this.failure ?? new SceneError('HOST_FAILED', 'The render host exited before connecting.'))),
+    ]).catch((e) => {
+      throw e instanceof SceneError ? e : new SceneError('HOST_FAILED', (e as Error).message);
+    });
+    this.channel = new IpcChannel(
+      socket,
+      config.jobId,
+      (h, bin) => this.dispatch(h as unknown as HostMessage, bin),
+      (e) => this.abort(new SceneError('HOST_FAILED', e.message)),
+      { maxHeader: 1 << 20, maxBinary: MAX_FRAME }
+    );
+    socket.on('close', () => this.abort(new SceneError('HOST_FAILED', 'The render host connection closed.')));
     const ready = await this.wait((m) => m.type === 'ready', this.limits.loadMs);
     if (ready.msg.type === 'ready') {
       this.pid = ready.msg.pid;
       this.versions = ready.msg.versions;
     }
+    // The host is our unreaped child, so its PID can't have been reused yet: record its identity.
+    const me = listProcesses().find((p) => p.pid === child.pid);
+    if (me) this.hostIdentity = { pid: me.pid, start: me.start };
+    this.snapshot();
   }
 
-  /** Recent stderr from the host (Chromium logs), for diagnostics. */
+  /** Records the host's current process tree (only while the host is alive). */
+  snapshot(): void {
+    if (!this.hostIdentity || !this.child || this.child.exitCode !== null || this.child.signalCode !== null) return;
+    for (const p of ownedTree(this.hostIdentity, listProcesses())) this.ownedMap.set(`${p.pid}:${p.start}`, p);
+  }
+
+  /** Recent stdout/stderr from the host (Chromium logs), for diagnostics. */
   get log(): string {
-    return this.stderr;
+    return this.diagnostics;
   }
 
   get dataFolder(): string {
@@ -138,7 +184,7 @@ export class SceneHost {
   private wait(match: (m: HostMessage) => boolean, ms: number): Promise<{ msg: HostMessage; bin: Buffer | null }> {
     if (this.failure) return Promise.reject(this.failure);
     return new Promise((resolve, reject) => {
-      // The app's own watchdog: the host must answer in time, or it is killed.
+      // The app's own watchdog: the host must answer in time, or it is stopped.
       const timer = setTimeout(() => {
         const err = new SceneError('FRAME_TIMEOUT', 'The render host stopped responding.');
         void this.close(err);
@@ -152,27 +198,35 @@ export class SceneHost {
     });
   }
 
-  private write(header: object, bin?: Uint8Array): void {
+  private async send(header: Record<string, unknown>, bin?: Uint8Array): Promise<void> {
     if (this.failure) throw this.failure;
-    for (const part of encodeMessage(header, bin)) this.child!.stdin.write(part);
+    if (!this.channel) throw new SceneError('HOST_FAILED', 'The render host is not connected.');
+    try {
+      await this.channel.send(header, bin);
+    } catch (e) {
+      throw this.failure ?? new SceneError('HOST_FAILED', (e as Error).message);
+    }
   }
 
   /** Sends the job's files and opens the scene. */
   async open(job: SceneJob): Promise<SceneInfo> {
-    for (const f of job.files) this.write({ type: 'file', path: f.path }, f.data);
+    for (const f of job.files) await this.send({ type: 'file', path: f.path }, f.data);
     const { files: _files, ...rest } = job;
-    this.write({ type: 'open', job: rest, limits: this.limits, token: crypto.randomBytes(12).toString('hex') });
-    const r = await this.wait((m) => m.type === 'opened', this.limits.loadMs * 2);
+    const opened = this.wait((m) => m.type === 'opened', this.limits.loadMs * 2);
+    await this.send({ type: 'open', job: rest, limits: this.limits });
+    const r = await opened;
     if (r.msg.type !== 'opened') throw new SceneError('HOST_FAILED', 'Unexpected reply.');
     this.info = r.msg.info;
+    this.snapshot(); // the renderer exists now
     return r.msg.info;
   }
 
   /** One output frame: the average of the given scene times (seconds), as straight RGBA. */
   async capture(times: number[], postCamera = false): Promise<{ rgba: Buffer; ms: number }> {
     const id = this.nextId++;
-    this.write({ type: 'capture', id, times, postCamera });
-    const r = await this.wait((m) => (m.type === 'frame' || m.type === 'error') && (m as { id?: number }).id === id, this.limits.frameMs);
+    const reply = this.wait((m) => (m.type === 'frame' || m.type === 'error') && (m as { id?: number }).id === id, this.limits.frameMs);
+    await this.send({ type: 'capture', id, times, postCamera });
+    const r = await reply;
     if (r.msg.type !== 'frame' || !r.bin) throw new SceneError('HOST_FAILED', 'Unexpected reply.');
     return { rgba: r.bin, ms: r.msg.ms };
   }
@@ -180,26 +234,61 @@ export class SceneHost {
   /** Test hook: what the page put in window.__probe, plus every request the host blocked. */
   async probe(): Promise<{ page: unknown; blocked: string[] }> {
     const id = this.nextId++;
-    this.write({ type: 'probe', id });
-    const r = await this.wait((m) => m.type === 'probe' && m.id === id, 10_000);
+    const reply = this.wait((m) => m.type === 'probe' && m.id === id, 10_000);
+    await this.send({ type: 'probe', id });
+    const r = await reply;
     return JSON.parse((r.msg as { value: string }).value);
   }
 
-  /** Stops the host (gracefully, then by force) and deletes its data folder. Safe to call twice. */
-  async close(reason?: Error): Promise<void> {
+  /** Stops the host (gracefully, then through its handle) and safely cleans up. Safe to call twice. */
+  close(reason?: Error): Promise<void> {
     if (reason) this.abort(reason);
+    if (!this.closing) this.closing = this.doClose();
+    return this.closing;
+  }
+
+  private async doClose(): Promise<void> {
     const child = this.child;
-    if (child && child.exitCode === null && child.signalCode === null) {
+    const alive = () => child !== null && child.exitCode === null && child.signalCode === null;
+    if (alive()) {
       try {
-        child.stdin.end(Buffer.concat(encodeMessage({ type: 'close' })));
+        this.snapshot();
       } catch {
-        // already gone
+        // listing failed; use what was recorded
       }
-      const killer = setTimeout(() => child.kill('SIGKILL'), 2000);
+      try {
+        await Promise.race([this.channel?.send({ type: 'close' }), new Promise((r) => setTimeout(r, 500))]);
+      } catch {
+        // connection already gone
+      }
+      // Still our unreaped child: killing through the handle can't hit a reused PID.
+      const killer = setTimeout(() => {
+        if (alive()) child!.kill('SIGKILL');
+      }, 2000);
       await this.exited;
       clearTimeout(killer);
     }
-    if (child?.pid) killTree(child.pid);
+    this.channel?.close();
+    this.server?.close();
+    // Helpers normally exit with the host; give them a moment, then stop any that remain, verified.
+    const owned = this.owned;
+    const helpers = owned.filter((p) => p.role === 'helper');
+    const report: CleanupReport = { owned, exited: [], killed: [], skipped: [] };
+    try {
+      let state = stillRunning(helpers, helpers.length ? listProcesses() : []);
+      for (let i = 0; i < 15 && state.alive.length; i++) {
+        await new Promise((r) => setTimeout(r, 200));
+        state = stillRunning(helpers, listProcesses());
+      }
+      const k = killVerified(state.alive);
+      report.killed = k.killed;
+      report.skipped = [...state.reused.map((pid) => ({ pid, reason: 'reused' })), ...k.skipped];
+      report.exited = helpers.map((h) => h.pid).filter((pid) => !report.killed.includes(pid) && !report.skipped.some((s) => s.pid === pid));
+      if (this.hostIdentity) report.exited.unshift(this.hostIdentity.pid);
+    } catch (e) {
+      report.skipped.push({ pid: 0, reason: `process listing failed: ${(e as Error).message}` });
+    }
+    this.cleanup = report;
     this.child = null;
     if (this.dataDir) {
       for (let i = 0; i < 20; i++) {

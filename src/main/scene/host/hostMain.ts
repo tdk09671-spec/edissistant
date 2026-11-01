@@ -1,5 +1,6 @@
 // Render host: a separate Electron process that runs untrusted scene code (Claude-written HTML/CSS/
-// SVG/JS) in one locked-down, hidden Chromium window and returns frames over stdout.
+// SVG/JS) in one locked-down, off-screen Chromium page and returns frames to the app over a dedicated,
+// authenticated socket (ipc.ts). stdin is unused; stdout/stderr are diagnostics only.
 //
 // It is started by the app (or a test) with a scrubbed environment and its own empty data folder.
 // It never receives the API key, settings, project paths or app IPC. Only the job's files are
@@ -10,10 +11,12 @@
 // pop-ups, downloads, dialogs or permissions, and a strict CSP. Frames are captured through the
 // DevTools protocol, which the page cannot reach.
 
+import * as crypto from 'crypto';
 import { app, BrowserWindow, protocol, session, type WebContents } from 'electron';
+import { connectToApp, IpcChannel, takeIpcFile, type IpcConfig } from '../ipc';
 import { decodePng } from '../png';
 import { Accumulator, applyCamera, premultiply, type CameraState } from '../pixels';
-import { encodeMessage, MessageReader, type HostCommand, type HostMessage, type SceneErrorCode, type SceneInfo, type SceneJob, type SceneLimits } from '../protocol';
+import { type HostCommand, type HostMessage, type SceneErrorCode, type SceneInfo, type SceneJob, type SceneLimits } from '../protocol';
 import { determinismShim } from '../shim';
 
 const SCHEME = 'edissistant-scene';
@@ -27,6 +30,19 @@ const dataDir = arg('scene-host-data');
 if (!dataDir) {
   process.stderr.write('scene host: --scene-host-data is required\n');
   process.exit(2);
+}
+// The connection file is read and deleted at once (it holds the job's secret).
+let ipcConfig: IpcConfig;
+try {
+  ipcConfig = takeIpcFile(dataDir);
+} catch (e) {
+  process.stderr.write(`scene host: no valid IPC file (${(e as Error).message})\n`);
+  process.exit(2);
+}
+// Test hook (B2 regression): Electron on Windows writes stray bytes to stdout; prove they can't matter.
+if (process.argv.includes('--scene-test-stdout-noise')) {
+  process.stdout.write('\r\n\r\nnoise on stdout: not protocol\r\n');
+  process.stderr.write('noise on stderr\r\n');
 }
 app.setPath('userData', dataDir);
 app.setPath('sessionData', dataDir);
@@ -45,7 +61,23 @@ sw('disable-domain-reliability');
 sw('disable-sync');
 sw('no-pings');
 sw('disable-breakpad');
-sw('disable-features', 'MediaRouter,OptimizationHints,Translate,AutofillServerCommunication,CertificateTransparencyComponentUpdater,DialMediaRouteProvider,SpareRendererForSitePerProcess');
+sw(
+  'disable-features',
+  [
+    'MediaRouter', 'OptimizationHints', 'Translate', 'AutofillServerCommunication', 'CertificateTransparencyComponentUpdater', 'DialMediaRouteProvider', 'SpareRendererForSitePerProcess',
+    // WebRTC: no mDNS hostname candidates (the Windows run saw mDNS UDP sockets) …
+    'WebRtcHideLocalIpsWithMdns',
+    // … and no WebGPU service (exposed in GPU mode on Windows).
+    'WebGPUService', 'Vulkan',
+  ].join(',')
+);
+// Remove device and GPU APIs from the page entirely (Blink runtime features).
+sw('disable-blink-features', 'WebGPU,WebUSB,WebBluetooth,WebHID,Serial,WebXR,WebNFC,DirectSockets');
+if (process.argv.includes('--scene-test-fake-media')) {
+  // Test hook: fake camera/microphone, so the permission denial (not "no device") is what's exercised.
+  // (Never --use-fake-ui-for-media-stream: that would auto-grant.)
+  sw('use-fake-device-for-media-stream');
+}
 sw('js-flags', `--max-old-space-size=${Number(arg('scene-heap')) || 1024}`);
 if (!process.argv.includes('--scene-gpu')) {
   // Software rasterisation: the same pixels on every machine, whatever the GPU.
@@ -72,7 +104,17 @@ const CSP = [
   "base-uri 'none'",
   "form-action 'none'",
   "navigate-to 'none'",
+  // Browser-enforced document sandbox: scripts and its own origin only. No modals (alert, confirm, print),
+  // pop-ups, top-level navigation, forms, downloads, pointer lock or presentation, in this document and
+  // in any frame it creates (sandbox flags are inherited, also by about:blank frames).
+  'sandbox allow-scripts allow-same-origin',
 ].join('; ');
+
+// Every powerful feature off for the page and anything it embeds (a second layer to the permission handlers).
+const PERMISSIONS_POLICY = [
+  'camera', 'microphone', 'geolocation', 'display-capture', 'usb', 'serial', 'hid', 'bluetooth', 'payment', 'clipboard-read', 'clipboard-write',
+  'screen-wake-lock', 'web-share', 'xr-spatial-tracking', 'midi', 'publickey-credentials-get', 'idle-detection', 'local-fonts', 'window-management', 'gamepad',
+].map((f) => `${f}=()`).join(', ');
 
 // Test hook (set only by the test suite): serve pages without the CSP, to prove the network and
 // navigation layers block everything on their own.
@@ -97,29 +139,16 @@ const MIME: Record<string, string> = {
   otf: 'font/otf',
 };
 
-// --- Messaging -------------------------------------------------------------------------------------
+// --- Messaging (the authenticated socket; see ipc.ts) ------------------------------------------------
 
-let writing: Promise<void> = Promise.resolve();
+let channel: IpcChannel | null = null;
 function send(message: HostMessage, bin?: Uint8Array): Promise<void> {
-  writing = writing.then(
-    () =>
-      new Promise<void>((resolve) => {
-        const parts = encodeMessage(message, bin);
-        let i = 0;
-        const next = () => {
-          while (i < parts.length) {
-            if (!process.stdout.write(parts[i++])) return void process.stdout.once('drain', next);
-          }
-          resolve();
-        };
-        next();
-      })
-  );
-  return writing;
+  if (!channel) return Promise.reject(new Error('not connected'));
+  return channel.send(message as unknown as Record<string, unknown>, bin);
 }
 
 async function fail(code: SceneErrorCode, message: string, id?: number): Promise<never> {
-  await send({ type: 'error', code, message: message.slice(0, 2000), ...(id !== undefined ? { id } : {}) });
+  await send({ type: 'error', code, message: message.slice(0, 2000), ...(id !== undefined ? { id } : {}) }).catch(() => undefined);
   setTimeout(() => app.exit(3), 50);
   return new Promise<never>(() => undefined);
 }
@@ -173,11 +202,23 @@ async function open(cmd: Extract<HostCommand, { type: 'open' }>): Promise<void> 
   limits = cmd.limits;
   if (!files.has(job.entry)) return fail('INVALID_JOB', `The entry file ${job.entry} was not sent.`);
   if (!(job.width > 0 && job.height > 0 && job.deviceScale > 0 && job.deviceScale <= 4)) return fail('INVALID_JOB', 'Invalid size or device scale.');
-  const token = cmd.token;
+  // The page's origin: random per job, so no two jobs (or guesses) share it.
+  const token = crypto.randomBytes(12).toString('hex');
   const origin = `${SCHEME}://${token}/`;
   const ses = session.fromPartition(`scene-${token}`, { cache: false });
-  ses.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
-  ses.setPermissionCheckHandler(() => false);
+  const record = (what: string) => {
+    if (blocked.length < 200 && !blocked.includes(what)) blocked.push(what);
+  };
+  // Everything denied, and recorded (camera, microphone, notifications, openExternal for mailto:/custom
+  // protocols, …).
+  ses.setPermissionRequestHandler((_wc, permission, cb) => {
+    record(`permission:${permission}`);
+    cb(false);
+  });
+  ses.setPermissionCheckHandler((_wc, permission) => {
+    record(`permission-check:${permission}`);
+    return false;
+  });
   ses.setDevicePermissionHandler(() => false);
   ses.on('will-download', (event) => event.preventDefault());
   ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (d, cb) => {
@@ -195,7 +236,13 @@ async function open(cmd: Extract<HostCommand, { type: 'open' }>): Promise<void> 
     const ext = rel.split('.').pop()!.toLowerCase();
     return new Response(new Uint8Array(files.get(rel)!), {
       status: 200,
-      headers: { 'content-type': MIME[ext] ?? 'application/octet-stream', ...(CSP_OFF ? {} : { 'content-security-policy': CSP }), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' },
+      headers: {
+        'content-type': MIME[ext] ?? 'application/octet-stream',
+        ...(CSP_OFF ? {} : { 'content-security-policy': CSP }),
+        'permissions-policy': PERMISSIONS_POLICY,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      },
     });
   });
 
@@ -402,43 +449,55 @@ async function probe(cmd: Extract<HostCommand, { type: 'probe' }>): Promise<void
 
 // --- Command loop ----------------------------------------------------------------------------------
 
-app.whenReady().then(() => {
-  const reader = new MessageReader(1 << 20);
+let filesBytes = 0;
+const MAX_JOB_BYTES = 1024 * 1024 * 1024;
+
+app.whenReady().then(async () => {
+  let socket;
+  try {
+    socket = await connectToApp(ipcConfig);
+  } catch (e) {
+    process.stderr.write(`scene host: could not connect to the app (${(e as Error).message})\n`);
+    app.exit(4);
+    return;
+  }
   let queue: Promise<void> = Promise.resolve();
-  let pendingFile: string | null = null;
-  process.stdin.on('data', (chunk: Buffer) => {
-    let messages;
-    try {
-      messages = reader.push(chunk);
-    } catch (e) {
-      void fail('HOST_FAILED', (e as Error).message);
-      return;
-    }
-    for (const { header, bin } of messages) {
-      const cmd = header as HostCommand;
-      queue = queue.then(async () => {
-        debug('command', cmd.type);
-        switch (cmd.type) {
-          case 'file':
-            pendingFile = cmd.path;
-            if (!/^[A-Za-z0-9 _.()+-]+(\/[A-Za-z0-9 _.()+-]+)*$/.test(cmd.path) || cmd.path.split('/').some((p) => p === '..' || p === '.')) return void fail('INVALID_JOB', `Invalid file path ${cmd.path}.`);
-            files.set(pendingFile, bin ?? Buffer.alloc(0));
-            return;
-          case 'open':
-            return open(cmd);
-          case 'capture':
-            return capture(cmd);
-          case 'probe':
-            return probe(cmd);
-          case 'close':
-            win?.destroy();
-            setTimeout(() => app.exit(0), 20);
-            return;
-        }
-      }).catch((e) => void fail('HOST_FAILED', (e as Error).message));
-    }
-  });
-  // The app went away: stop at once.
-  process.stdin.on('end', () => app.exit(0));
+  channel = new IpcChannel(
+    socket,
+    ipcConfig.jobId,
+    (header, bin) => {
+      const cmd = header as unknown as HostCommand;
+      queue = queue
+        .then(async () => {
+          debug('command', cmd.type);
+          switch (cmd.type) {
+            case 'file':
+              if (!/^[A-Za-z0-9 _.()+-]+(\/[A-Za-z0-9 _.()+-]+)*$/.test(cmd.path) || cmd.path.split('/').some((p) => p === '..' || p === '.')) return void fail('INVALID_JOB', `Invalid file path ${cmd.path}.`);
+              filesBytes += bin?.length ?? 0;
+              if (filesBytes > MAX_JOB_BYTES) return void fail('INVALID_JOB', 'The job files are too large.');
+              files.set(cmd.path, bin ?? Buffer.alloc(0));
+              return;
+            case 'open':
+              return open(cmd);
+            case 'capture':
+              return capture(cmd);
+            case 'probe':
+              return probe(cmd);
+            case 'close':
+              win?.destroy();
+              setTimeout(() => app.exit(0), 20);
+              return;
+          }
+        })
+        .catch((e) => void fail('HOST_FAILED', (e as Error).message));
+    },
+    (e) => {
+      process.stderr.write(`scene host: connection error (${e.message})\n`);
+      app.exit(5);
+    },
+    { maxHeader: 1 << 20, maxBinary: 512 * 1024 * 1024 }
+  );
+  // The app went away (or closed the job): stop at once.
+  socket.on('close', () => app.exit(0));
   void send({ type: 'ready', pid: process.pid, versions: { electron: process.versions.electron, chrome: process.versions.chrome } });
 });
