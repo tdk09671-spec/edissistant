@@ -1,0 +1,4 @@
+<!doctype html><html><body style="margin:0;background:#000"><script>
+// The scene's own error must be reported with its message, not hang or crash the app.
+window.SCENE = { dur: 1, render(t) { if (t >= 0.3) throw new Error('Scene bug: missing element #card'); } };
+</script></body></html>

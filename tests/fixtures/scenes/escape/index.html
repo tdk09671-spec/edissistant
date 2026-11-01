@@ -1,0 +1,81 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- Hostile scene: tries every way out of the renderer it can. Each attempt records what happened in
+     window.__probe.results; the test also counts anything that reaches its local listeners.
+     Query: port=<tcp listener>, udp=<udp listener>. -->
+<meta http-equiv="refresh" content="0; url=http://127.0.0.1:1/refresh">
+<link rel="stylesheet" href="http://127.0.0.1:1/remote.css">
+<link rel="prefetch" href="http://127.0.0.1:1/prefetch">
+<link rel="preconnect" href="http://127.0.0.1:1">
+<link rel="dns-prefetch" href="//exfil.example.com">
+<script src="http://127.0.0.1:1/remote.js"></script>
+<style>
+@import url('http://127.0.0.1:1/import.css');
+@font-face{font-family:'Remote';src:url('http://127.0.0.1:1/font.woff2')}
+body{background:url('http://127.0.0.1:1/bg.png')}
+</style></head><body>
+<div id="tc" style="position:absolute;left:0;top:0;width:4px;height:4px;background:#000"></div>
+<script>
+const q = new URLSearchParams(location.search);
+const PORT = q.get('port'), UDP = q.get('udp');
+const L = `http://127.0.0.1:${PORT}`;
+const results = {};
+window.__probe = { results, done: false };
+const note = (k, v) => { results[k] = String(v).slice(0, 160); };
+const pending = new Set();
+// Every attempt starts at once; each records its outcome when it settles ("pending" = never settled,
+// which counts as blocked as long as nothing reached the test's listeners). No timers: the page's
+// clock is virtual, so the test waits in real time instead.
+const tryIt = (k, fn) => { pending.add(k); note(k, 'pending'); Promise.resolve().then(fn).then((r) => note(k, `allowed:${r}`), (e) => note(k, `blocked:${e && (e.name || e.message)}`)).finally(() => pending.delete(k)); };
+note('typeof require', typeof require);
+note('typeof process', typeof process);
+note('typeof module', typeof module);
+note('typeof electron', typeof electron);
+note('typeof ipcRenderer', typeof ipcRenderer);
+note('typeof __dirname', typeof __dirname);
+note('electronAPI', typeof window.electronAPI);
+note('renderHost', typeof window.renderHost);
+note('chrome.runtime', typeof (window.chrome && window.chrome.runtime && window.chrome.runtime.sendMessage));
+try { note('eval', eval('1+1')); } catch (e) { note('eval', `blocked:${e.name}`); }
+try { note('Function', new Function('return 2')()); } catch (e) { note('Function', `blocked:${e.name}`); }
+try { const w = window.open(`${L}/popup`); note('window.open', w ? 'allowed:window' : 'blocked:null'); } catch (e) { note('window.open', `blocked:${e.name}`); }
+try { alert('hi'); note('alert', 'returned'); } catch (e) { note('alert', `blocked:${e.name}`); }
+
+{
+  tryIt('fetch loopback', () => (fetch(`${L}/fetch`).then((r) => r.status)));
+  tryIt('fetch https', () => (fetch('https://example.com/').then((r) => r.status)));
+  tryIt('fetch file', () => (fetch('file:///etc/hostname').then((r) => r.text())));
+  tryIt('fetch windows file', () => (fetch('file:///C:/Windows/win.ini').then((r) => r.text())));
+  tryIt('fetch app media protocol', () => (fetch('edissistant-media:///etc/hostname').then((r) => r.text())));
+  tryIt('fetch other job origin', () => (fetch('edissistant-scene://othertoken000000000000/index.html').then((r) => r.status)));
+  tryIt('fetch path traversal', () => (fetch(`${location.origin}/%2e%2e/%2e%2e/etc/hostname`).then((r) => r.status)));
+  tryIt('fetch own file', () => (fetch(`${location.origin}/escape/index.html`).then((r) => r.status)));
+  tryIt('xhr', () => (new Promise((res, rej) => { const x = new XMLHttpRequest(); x.open('GET', `${L}/xhr`); x.onload = () => res(x.status); x.onerror = () => rej(new Error('NetworkError')); x.send(); })));
+  tryIt('image', () => (new Promise((res, rej) => { const i = new Image(); i.onload = () => res('loaded'); i.onerror = () => rej(new Error('ImageError')); i.src = `${L}/img.png`; })));
+  tryIt('websocket', () => (new Promise((res, rej) => { const w = new WebSocket(`ws://127.0.0.1:${PORT}/ws`); w.onopen = () => res('open'); w.onerror = () => rej(new Error('WebSocketError')); })));
+  tryIt('eventsource', () => (new Promise((res, rej) => { const s = new EventSource(`${L}/sse`); s.onopen = () => res('open'); s.onerror = () => rej(new Error('EventSourceError')); })));
+  tryIt('sendBeacon', () => navigator.sendBeacon(`${L}/beacon`, 'x') ? Promise.reject(new Error('queued-but-should-be-blocked-by-network')) : Promise.reject(new Error('refused')));
+  tryIt('iframe http', () => (new Promise((res, rej) => { const f = document.createElement('iframe'); f.onload = () => { let doc = null; try { doc = f.contentDocument; } catch (e) {} /* a blocked frame shows Chromium's opaque error page */ doc && doc.body && doc.body.textContent.includes('ok') ? res('content') : rej(Object.assign(new Error('opaque'), { name: 'OpaqueErrorPage' })); }; f.onerror = () => rej(new Error('FrameError')); f.src = `${L}/frame`; document.body.appendChild(f); })));
+  tryIt('iframe file', () => (new Promise((res, rej) => { const f = document.createElement('iframe'); f.onload = () => { let doc = null; try { doc = f.contentDocument; } catch (e) {} doc && doc.body && doc.body.textContent.trim() ? res('content') : rej(Object.assign(new Error('opaque'), { name: 'OpaqueErrorPage' })); }; f.src = 'file:///etc/hostname'; document.body.appendChild(f); })));
+  tryIt('worker', () => (new Promise((res, rej) => { const w = new Worker(URL.createObjectURL(new Blob(['postMessage(1)'], { type: 'text/javascript' }))); w.onmessage = () => res('ran'); w.onerror = (e) => rej(new Error('WorkerError')); })));
+  tryIt('serviceWorker', () => (navigator.serviceWorker ? navigator.serviceWorker.register('sw.js').then(() => 'registered') : Promise.reject(new Error('unavailable'))));
+  tryIt('webrtc', () => (new Promise((res, rej) => {
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: `stun:127.0.0.1:${UDP}` }] });
+    pc.createDataChannel('x'); let cands = 0;
+    pc.onicecandidate = (e) => { if (e.candidate) cands++; else res(`gathered:${cands}`); };
+    pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(rej);
+  })));
+  tryIt('getUserMedia', () => (navigator.mediaDevices.getUserMedia({ video: true }).then(() => 'stream')));
+  tryIt('geolocation', () => (new Promise((res, rej) => navigator.geolocation.getCurrentPosition(() => res('pos'), (e) => rej(new Error(`GeoError${e.code}`))))));
+  tryIt('clipboard', () => (navigator.clipboard.readText().then((t) => `read:${t.length}`)));
+  tryIt('notification', () => (Notification.requestPermission().then((p) => (p === 'granted' ? 'granted' : Promise.reject(new Error(p))))));
+  tryIt('form post', () => { const f = document.createElement('form'); f.method = 'POST'; f.action = `${L}/form`; document.body.appendChild(f); f.submit(); return 'submitted'; });
+  tryIt('navigate top', () => { location.href = `${L}/navigate`; return 'set'; });
+  tryIt('download', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['x'])); a.download = 'x.txt'; document.body.appendChild(a); a.click(); return 'clicked'; });
+  note('still on origin', location.origin);
+}
+window.__probe.pending = () => [...pending];
+window.SCENE = { dur: 0.5, render(t) {
+  // Also try from inside a frame.
+  try { fetch(`${L}/fetch-in-render`).catch(() => {}); } catch (e) {}
+} };
+</script></body></html>

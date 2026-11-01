@@ -1,0 +1,4 @@
+<!doctype html><html><body style="margin:0;background:#000"><script>
+// Endless loop from 0.5 s: the frame must time out and the renderer be stopped.
+window.SCENE = { dur: 1, render(t) { if (t >= 0.5) { for (;;) {} } } };
+</script></body></html>
