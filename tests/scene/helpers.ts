@@ -84,36 +84,4 @@ export class Listener {
   }
 }
 
-/** True while the process runs (a zombie waiting to be reaped counts as stopped). */
-export function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-  } catch {
-    return false;
-  }
-  if (process.platform !== 'linux') return true;
-  try {
-    const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
-    return stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3) !== 'Z';
-  } catch {
-    return false;
-  }
-}
-
-/** Child processes of `pid` (Linux /proc), e.g. Chromium helpers left behind. */
-export function descendants(pid: number): number[] {
-  if (process.platform !== 'linux') return [];
-  const out: number[] = [];
-  for (const d of fs.readdirSync('/proc').filter((x) => /^\d+$/.test(x))) {
-    try {
-      const stat = fs.readFileSync(`/proc/${d}/stat`, 'utf8');
-      const ppid = Number(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1]);
-      if (ppid === pid) out.push(Number(d), ...descendants(Number(d)));
-    } catch {
-      // process went away
-    }
-  }
-  return out;
-}
-
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

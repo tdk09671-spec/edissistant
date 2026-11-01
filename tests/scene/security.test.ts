@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SceneHost } from '../../src/main/scene/client';
-import { descendants, fixtureJob, hostOptions, Listener, OUT, sleep } from './helpers';
+import { ELECTRON, fixtureJob, hostOptions, Listener, OUT, sleep } from './helpers';
 
 const report = (name: string, data: unknown) => {
   fs.mkdirSync(OUT, { recursive: true });
@@ -34,6 +34,84 @@ afterAll(async () => {
   await listener.stop();
 });
 
+/**
+ * UDP sockets owned by this user in this network namespace (Linux /proc/net/udp{,6}), except the test
+ * listener's own. Chromium makes its helpers non-dumpable, so their per-process fd tables can't be read;
+ * the network service (where WebRTC/mDNS sockets would live) shares this namespace, so this is the
+ * scope of the evidence.
+ */
+function userUdpSockets(exceptPort: number): string[] {
+  if (process.platform !== 'linux') return [];
+  const uid = os.userInfo().uid;
+  const out: string[] = [];
+  for (const t of ['udp', 'udp6']) {
+    if (!fs.existsSync(`/proc/net/${t}`)) continue; // no IPv6 in some containers
+    for (const line of fs.readFileSync(`/proc/net/${t}`, 'utf8').split('\n').slice(1)) {
+      const f = line.trim().split(/\s+/);
+      if (f.length < 8 || Number(f[7]) !== uid) continue;
+      const port = parseInt(f[1].split(':')[1], 16);
+      if (port !== exceptPort) out.push(`${t}:${port}`);
+    }
+  }
+  return out;
+}
+
+/** The executable a process runs (Linux), or '' when it can't be read. */
+function exeOf(pid: number): string {
+  try {
+    return fs.realpathSync(`/proc/${pid}/exe`);
+  } catch {
+    return '';
+  }
+}
+
+// Fake desktop handlers (Linux): if the host ever tried to open mailto:/custom schemes with the desktop,
+// one of these would run and leave a mark.
+const FAKE_BIN = path.join(OUT, 'fake-handlers');
+function fakeHandlersPath(): Record<string, string> | undefined {
+  if (process.platform !== 'linux') return undefined;
+  fs.rmSync(FAKE_BIN, { recursive: true, force: true });
+  fs.mkdirSync(FAKE_BIN, { recursive: true });
+  for (const b of ['xdg-open', 'xdg-email', 'gio', 'gnome-open', 'kde-open', 'kde-open5', 'exo-open', 'sensible-browser', 'x-www-browser', 'www-browser']) {
+    fs.writeFileSync(path.join(FAKE_BIN, b), `#!/bin/sh\necho "${b} $*" >> "${path.join(FAKE_BIN, 'LAUNCHED')}"\n`, { mode: 0o755 });
+  }
+  return { PATH: `${FAKE_BIN}:${process.env.PATH}` };
+}
+const launched = () => (fs.existsSync(path.join(FAKE_BIN, 'LAUNCHED')) ? fs.readFileSync(path.join(FAKE_BIN, 'LAUNCHED'), 'utf8') : '');
+
+async function runEscape(opts: Parameters<typeof hostOptions>[0]) {
+  const h = new SceneHost(hostOptions(opts));
+  let results: Record<string, string> = {};
+  let blocked: string[] = [];
+  let printFrameMs = 0;
+  const procs: { pid: number; name: string; cmd: string; env: string; status: string }[] = [];
+  let udp: string[] = [];
+  try {
+    await h.start();
+    await h.open(fixtureJob('escape/index.html', { kind: 'scene' }, { query: `port=${listener.port}&udp=${listener.udpPort}` }));
+    await h.capture([0.1]);
+    for (let i = 0; i < 40; i++) {
+      const p = (await h.probe()) as { page: { results: Record<string, string> } | null; blocked: string[] };
+      results = p.page?.results ?? {};
+      blocked = p.blocked;
+      if (Object.values(results).every((v) => v !== 'pending')) break;
+      await sleep(200);
+    }
+    const t0 = Date.now();
+    await h.capture([0.2]); // calls window.print() inside the frame: must not stall
+    printFrameMs = Date.now() - t0;
+    h.snapshot();
+    udp = userUdpSockets(listener.udpPort); // while the job is still running, after every attempt
+    for (const o of h.owned) {
+      procs.push({ pid: o.pid, name: o.name, cmd: procText(o.pid, 'cmdline').replace(/\0/g, ' '), env: procText(o.pid, 'environ'), status: procText(o.pid, 'status') });
+    }
+  } finally {
+    await h.close();
+  }
+  await sleep(300);
+  return { h, results, blocked, printFrameMs, procs, udp };
+}
+
 const procText = (pid: number, file: string) => {
   try {
     return fs.readFileSync(`/proc/${pid}/${file}`, 'utf8');
@@ -43,32 +121,10 @@ const procText = (pid: number, file: string) => {
 };
 
 describe('render host isolation', () => {
-  it('a hostile scene reaches nothing: no network, files, Node, app API, pop-ups, navigation or workers', async () => {
-    const h = new SceneHost(hostOptions({ proxy: `127.0.0.1:${listener.port}` }));
-    let results: Record<string, string> = {};
-    let blocked: string[] = [];
-    const procs: { pid: number; cmd: string; env: string; status: string }[] = [];
-    try {
-      await h.start();
-      await h.open(fixtureJob('escape/index.html', { kind: 'scene' }, { query: `port=${listener.port}&udp=${listener.udpPort}` }));
-      await h.capture([0.1]);
-      for (let i = 0; i < 40; i++) {
-        const p = (await h.probe()) as { page: { results: Record<string, string> } | null; blocked: string[] };
-        results = p.page?.results ?? {};
-        blocked = p.blocked;
-        if (Object.values(results).every((v) => v !== 'pending')) break;
-        await sleep(200);
-      }
-      await h.capture([0.2]); // still alive and drawing after every attempt
-      if (process.platform === 'linux') {
-        for (const pid of [h.pid, ...descendants(h.pid)]) procs.push({ pid, cmd: procText(pid, 'cmdline').replace(/\0/g, ' '), env: procText(pid, 'environ'), status: procText(pid, 'status') });
-      }
-    } finally {
-      await h.close();
-    }
-    await sleep(300);
+  it('a hostile scene reaches nothing: no network, files, Node, app API, pop-ups, navigation, workers, printing, WebRTC, WebGPU, camera or external apps', async () => {
+    const { h, results, blocked, printFrameMs, procs, udp } = await runEscape({ proxy: `127.0.0.1:${listener.port}`, testFakeMedia: true, env: fakeHandlersPath() });
+    report('escape', { results, blocked, printFrameMs, listenerHits: listener.hits, processes: procs.map((p) => ({ pid: p.pid, name: p.name, cmd: p.cmd.slice(0, 120), seccomp: /Seccomp:\s+(\d)/.exec(p.status)?.[1], noNewPrivs: /NoNewPrivs:\s+(\d)/.exec(p.status)?.[1] })), userUdpSockets: udp });
 
-    report('escape', { results, listenerHits: listener.hits, processes: procs.map((p) => ({ pid: p.pid, cmd: p.cmd.slice(0, 120), seccomp: /Seccomp:\s+(\d)/.exec(p.status)?.[1], noNewPrivs: /NoNewPrivs:\s+(\d)/.exec(p.status)?.[1] })) });
     // Nothing reached the listeners: no HTTP, WebSocket, proxy CONNECT, TCP or UDP (WebRTC/STUN).
     expect(listener.hits).toEqual([]);
 
@@ -78,19 +134,39 @@ describe('render host isolation', () => {
     expect(results.eval).toMatch(/^blocked:EvalError/); // CSP: no eval
     expect(results.Function).toMatch(/^blocked:EvalError/);
     expect(results['window.open']).toBe('blocked:null');
-    expect(results.alert).toBe('returned'); // dialogs disabled: returns at once, shows nothing
+    expect(results.alert).toBe('returned'); // no modals (sandboxed document): returns at once, shows nothing
     const mustNotSucceed = [
       'fetch loopback', 'fetch https', 'fetch file', 'fetch windows file', 'fetch app media protocol',
-      'xhr', 'image', 'websocket', 'eventsource', 'sendBeacon', 'iframe http', 'iframe file', 'worker', 'serviceWorker', 'getUserMedia', 'geolocation', 'clipboard', 'notification',
+      'xhr', 'image', 'websocket', 'eventsource', 'sendBeacon', 'iframe http', 'iframe file', 'worker', 'serviceWorker', 'geolocation', 'clipboard', 'notification',
+      'webrtc', 'webgpu adapter', 'getDisplayMedia', 'external window.open',
     ];
     for (const k of mustNotSucceed) expect(results[k], `${k}: ${results[k]}`).toMatch(/^(blocked|pending)/);
+    // Camera and microphone: real (fake) devices exist, so this is the permission being denied, not "no device".
+    expect(results.getUserMedia).toBe('blocked:NotAllowedError');
+    // WebRTC and WebGPU are gone, also from a fresh about:blank frame.
+    expect(results.webrtc).toMatch(/^blocked:TypeError/);
+    expect(results['navigator.gpu']).toBe('undefined');
+    expect(results['blank frame RTCPeerConnection']).toMatch(/^(undefined|no-window)$/);
+    expect(results['blank frame gpu']).toMatch(/^(undefined|no-window)$/);
+    // Printing returns at once (no dialog, no stall), in the page, in a frame, and inside a frame render.
+    expect(results.print).toBe('returned');
+    expect(results['blank frame print']).toMatch(/^(returned|blocked)/);
+    expect(printFrameMs).toBeLessThan(5000);
     // These calls "succeed" from the page's point of view but go nowhere (asserted by the listener and the origin).
     expect(results['fetch path traversal']).toMatch(/^(blocked|pending|allowed:404)/); // nothing outside the job's files is served
     expect(results['fetch other job origin']).toMatch(/^(blocked|pending|allowed:404)/); // another job's files are never served
-    expect(results.webrtc).toMatch(/^(blocked|pending|allowed:gathered:0)/); // no ICE candidates, no UDP
     expect(results['still on origin']).toMatch(/^edissistant-scene:\/\/[0-9a-f]{24}$/);
     expect(results['fetch own file']).toBe('allowed:200'); // its own job files do load
-    void blocked;
+    expect(blocked).toContain('permission:media'); // the permission handler saw and denied it
+    // External protocols (mailto:, custom schemes, ms-settings:, tel:) launched nothing: every process the job
+    // owned runs the Electron binary (Chromium helpers re-exec /proc/self/exe and are briefly named "exe"),
+    // and none of the fake desktop handlers on the host's PATH was ever invoked.
+    for (const p of procs) {
+      const exe = exeOf(p.pid);
+      if (exe) expect(exe, `process ${p.pid} (${p.name}) runs ${exe}`).toBe(fs.realpathSync(ELECTRON));
+      else expect(p.name, `process ${p.pid}`).toMatch(/electron|chrome|^exe$/i);
+    }
+    if (process.platform === 'linux') expect(launched()).toBe('');
 
     if (process.platform === 'linux') {
       expect(procs.length).toBeGreaterThan(1);
@@ -107,9 +183,24 @@ describe('render host isolation', () => {
         expect(r.status).toMatch(/Seccomp:\s+2/);
         expect(r.status).toMatch(/NoNewPrivs:\s+1/);
       }
+      // No UDP socket (WebRTC host/STUN, mDNS 5353) owned by this user existed after every attempt.
+      expect(udp).toEqual([]);
+      // Positive control: the same scan does see this user's sockets (the listener's own UDP socket).
+      expect(userUdpSockets(-1)).toContain(`udp:${listener.udpPort}`);
     }
     expect(fs.existsSync(h.dataFolder)).toBe(false);
     expect(fs.existsSync(path.join(os.homedir(), 'Downloads', 'x.txt'))).toBe(false);
+  });
+
+  it('GPU mode: WebGPU stays unavailable (page and frames) and nothing gets out', async () => {
+    const before = listener.hits.length;
+    const { results } = await runEscape({ proxy: `127.0.0.1:${listener.port}`, gpu: true });
+    report('escape-gpu', { results });
+    expect(listener.hits.slice(before)).toEqual([]);
+    expect(results['navigator.gpu']).toBe('undefined');
+    expect(results['webgpu adapter']).toMatch(/^(blocked|pending)/);
+    expect(results['blank frame gpu']).toMatch(/^(undefined|no-window)$/);
+    expect(results.webrtc).toMatch(/^blocked/);
   });
 
   it('with the CSP switched off (test hook), the network and navigation layers still let nothing out', async () => {
@@ -136,6 +227,10 @@ describe('render host isolation', () => {
     expect(listener.hits.slice(before)).toEqual([]);
     // Without the CSP the requests reach the host's filter, which cancels them.
     expect(blocked.filter((u) => u.includes(`127.0.0.1:${listener.port}`)).length).toBeGreaterThan(5);
+    // The other layers still hold without the CSP: printing returns, WebRTC and WebGPU are gone.
+    expect(results.print).toBe('returned');
+    expect(results.webrtc).toMatch(/^blocked/);
+    expect(results['navigator.gpu']).toBe('undefined');
     for (const k of ['fetch loopback', 'xhr', 'image', 'websocket', 'eventsource', 'iframe http', 'fetch https', 'fetch file']) {
       expect(results[k], `${k}: ${results[k]}`).toMatch(/^(blocked|pending)/);
     }

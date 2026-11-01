@@ -3,21 +3,28 @@ import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 import { SceneHost } from '../../src/main/scene/client';
 import { renderAnimation } from '../../src/main/scene/service';
-import { descendants, fixtureJob, hostOptions, OUT, processAlive, sleep, timeCode, TOOLS } from './helpers';
+import { listProcesses } from '../../src/main/scene/processes';
+import { fixtureJob, hostOptions, OUT, timeCode, TOOLS } from './helpers';
 
 // Failure handling: every failure ends the job cleanly (no process left behind, no partial file, no
 // temporary folder) with a clear code, and the next job works.
 
+/** Every process the job owned (host + helpers, by PID + start time) has stopped; none was skipped. */
+function expectOwnedGone(h: SceneHost) {
+  expect(h.cleanup, 'cleanup report').toBeTruthy();
+  expect(h.cleanup!.owned.some((p) => p.role === 'host')).toBe(true);
+  const now = listProcesses();
+  for (const p of h.cleanup!.owned) {
+    expect(now.some((q) => q.pid === p.pid && q.start === p.start), `owned ${p.role} ${p.pid} (${p.name}) still running`).toBe(false);
+  }
+  expect(h.cleanup!.skipped).toEqual([]);
+}
+
 async function expectFailure(file: string, limits: { loadMs?: number; frameMs?: number; memoryMB?: number }, code: RegExp, captureAt = 0.6, heapMB?: number) {
   const h = new SceneHost(hostOptions({ limits, heapMB }));
-  let pid = 0;
-  let children: number[] = [];
   let err: { code?: string; message?: string } | null = null;
   try {
     await h.start();
-    pid = h.pid;
-    await sleep(300);
-    children = descendants(pid);
     await h.open(fixtureJob(`faults/${file}`, { kind: 'scene' }));
     await h.capture([captureAt]);
   } catch (e) {
@@ -26,9 +33,7 @@ async function expectFailure(file: string, limits: { loadMs?: number; frameMs?: 
     await h.close();
   }
   expect(err?.code ?? 'none').toMatch(code);
-  await sleep(500);
-  expect(processAlive(pid)).toBe(false);
-  for (const c of children) expect(processAlive(c), `helper process ${c} left running`).toBe(false);
+  expectOwnedGone(h);
   expect(fs.existsSync(h.dataFolder)).toBe(false);
   return err!;
 }
@@ -106,50 +111,34 @@ describe('cancellation', () => {
     fs.rmSync(out, { force: true });
     const controller = new AbortController();
     let seen = 0;
-    let hostPid = 0;
-    const started = renderAnimation(
+    let host: SceneHost | null = null;
+    // The outcome is captured at once, so a rejection is never unhandled while the test waits.
+    const outcome = renderAnimation(
       hostOptions({ signal: controller.signal }),
       fixtureJob('podcast-like/index.html', { kind: 'scene' }),
       { fps: 30, motionBlur: { samples: 2, shutter: 0.5 }, postCamera: false },
       { format: 'prores-4444', output: out, ffmpeg: TOOLS.ffmpeg!, ffprobe: TOOLS.ffprobe! },
       {
+        onHost: (h) => (host = h),
         onProgress: (done) => {
           seen = done;
           if (done === 5) controller.abort();
         },
       }
+    ).then(
+      () => null,
+      (e: unknown) => e as { code?: string }
     );
-    // Find the host process while it runs.
-    for (let i = 0; i < 50 && !hostPid; i++) {
-      await sleep(100);
-      const own = descendants(process.pid);
-      hostPid = own.find((p) => {
-        try {
-          return fs.readFileSync(`/proc/${p}/cmdline`, 'utf8').includes('hostMain.js');
-        } catch {
-          return false;
-        }
-      }) ?? 0;
-    }
-    await expect(started).rejects.toMatchObject({ code: 'CANCELLED' });
+    const err = await outcome;
+    expect(err?.code).toBe('CANCELLED');
     expect(seen).toBeGreaterThanOrEqual(5);
     expect(seen).toBeLessThan(60);
-    await sleep(500);
     expect(fs.existsSync(out)).toBe(false);
     expect(fs.readdirSync(path.dirname(out)).filter((f) => f.includes('partial'))).toEqual([]);
-    if (process.platform === 'linux') {
-      expect(hostPid).toBeGreaterThan(0);
-      expect(processAlive(hostPid)).toBe(false);
-      const left = descendants(process.pid).filter((p) => {
-        try {
-          const cmd = fs.readFileSync(`/proc/${p}/cmdline`, 'utf8');
-          return cmd.includes('ffmpeg') || cmd.includes('electron');
-        } catch {
-          return false;
-        }
-      });
-      expect(left).toEqual([]);
-    }
+    expectOwnedGone(host!);
+    // FFmpeg (a direct child of this test process) is gone too.
+    const ffmpegLeft = listProcesses().filter((p) => p.ppid === process.pid && /ffmpeg/i.test(p.name));
+    expect(ffmpegLeft).toEqual([]);
     await healthyJobStillWorks();
   });
 });

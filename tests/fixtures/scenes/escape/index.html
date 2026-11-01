@@ -64,7 +64,28 @@ try { alert('hi'); note('alert', 'returned'); } catch (e) { note('alert', `block
     pc.onicecandidate = (e) => { if (e.candidate) cands++; else res(`gathered:${cands}`); };
     pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(rej);
   })));
-  tryIt('getUserMedia', () => (navigator.mediaDevices.getUserMedia({ video: true }).then(() => 'stream')));
+  tryIt('getUserMedia', () => (navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(() => 'stream')));
+  tryIt('getDisplayMedia', () => (navigator.mediaDevices.getDisplayMedia ? navigator.mediaDevices.getDisplayMedia({ video: true }).then(() => 'stream') : Promise.reject(new Error('unavailable'))));
+  // WebGPU (exposed in GPU mode on Windows before the fix).
+  note('navigator.gpu', typeof navigator.gpu);
+  tryIt('webgpu adapter', () => (navigator.gpu ? navigator.gpu.requestAdapter().then((a) => (a ? 'adapter' : Promise.reject(new Error('null')))) : Promise.reject(new Error('unavailable'))));
+  // Printing (stalled the job on Windows before the fix): must return at once, without a dialog.
+  try { window.print(); note('print', 'returned'); } catch (e) { note('print', `blocked:${e.name}`); }
+  // A same-origin about:blank frame has its own fresh window: try to get the removed APIs back through it.
+  try {
+    const f = document.createElement('iframe'); document.body.appendChild(f); const w = f.contentWindow;
+    note('blank frame RTCPeerConnection', w ? typeof w.RTCPeerConnection : 'no-window');
+    note('blank frame gpu', w ? typeof w.navigator.gpu : 'no-window');
+    try { w.print(); note('blank frame print', 'returned'); } catch (e) { note('blank frame print', `blocked:${e.name}`); }
+    if (w && typeof w.RTCPeerConnection === 'function') {
+      tryIt('blank frame webrtc', () => (new Promise((res, rej) => { const pc = new w.RTCPeerConnection({ iceServers: [{ urls: `stun:127.0.0.1:${UDP}` }] }); pc.createDataChannel('x'); let n = 0; pc.onicecandidate = (e) => (e.candidate ? n++ : res(`gathered:${n}`)); pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(rej); })));
+    }
+  } catch (e) { note('blank frame', `blocked:${e.name}`); }
+  // External protocol handlers must never launch anything.
+  tryIt('external mailto', () => { location.href = 'mailto:someone@example.com'; return 'set'; });
+  tryIt('external custom scheme', () => { const a = document.createElement('a'); a.href = 'edissistant-test-launch://run'; document.body.appendChild(a); a.click(); return 'clicked'; });
+  tryIt('external window.open', () => { const w = window.open('ms-settings:privacy'); return w ? 'window' : Promise.reject(new Error('null')); });
+  tryIt('external iframe', () => { const f = document.createElement('iframe'); f.src = 'tel:+15550100'; document.body.appendChild(f); return 'appended'; });
   tryIt('geolocation', () => (new Promise((res, rej) => navigator.geolocation.getCurrentPosition(() => res('pos'), (e) => rej(new Error(`GeoError${e.code}`))))));
   tryIt('clipboard', () => (navigator.clipboard.readText().then((t) => `read:${t.length}`)));
   tryIt('notification', () => (Notification.requestPermission().then((p) => (p === 'granted' ? 'granted' : Promise.reject(new Error(p))))));
@@ -75,6 +96,8 @@ try { alert('hi'); note('alert', 'returned'); } catch (e) { note('alert', `block
 }
 window.__probe.pending = () => [...pending];
 window.SCENE = { dur: 0.5, render(t) {
+  // Printing from inside a frame must not stall the capture either.
+  try { window.print(); } catch (e) {}
   // Also try from inside a frame.
   try { fetch(`${L}/fetch-in-render`).catch(() => {}); } catch (e) {}
 } };
