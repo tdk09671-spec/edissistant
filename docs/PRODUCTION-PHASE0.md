@@ -136,16 +136,19 @@ Run with `npm run test:scene` (needs `npm run build:main`, FFmpeg, a display, an
   - **This says nothing yet about the editor's real scenes, fonts or Windows text rendering.**
 - **Benchmarks** (`tests/scene/bench.test.ts`, written to `test-results/scene/benchmark.json`):
 
-> **Provisional:** measured while other tests shared the CPU; a clean rerun replaces these numbers.
+Measured on an idle Intel(R) Xeon(R) Processor @ 2.10GHz container (4 vCPU, 17 GB, linux 6.18.44-fc-v185), software rendering. Each configuration was rendered twice, and both renders were byte-identical (decoded frames compared).
 
-Measured on: Intel(R) Xeon(R) Processor @ 2.10GHz (4 vCPU, 17 GB), linux 6.18.44-fc-v185, software (--disable-gpu), the default for repeatable pixels. Each configuration was rendered twice; both renders were identical.
+| Configuration | Frames | Output width | ms per frame | Render speed | File |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1080p30, 1 sample (no blur), PNG-MOV | 60 | 1920 px | 268 | 3.26 fps | 15.8 MB |
+| 1080p30 alpha, 3 subframes (render.py default), ProRes 4444 | 60 | 1920 px | 551 | 1.69 fps | 14.9 MB |
+| 1080p29.97, 3 subframes, PNG-MOV | 60 | 1920 px | 923 | 1.04 fps | 15.9 MB |
+| 4K25 (device scale 2), 4 subframes + post-capture camera, 15 frames, PNG-MOV | 15 | 3840 px | 7213 | 0.14 fps | 10.6 MB |
 
-| Configuration | Frames | Output | ms per frame | Render speed | File |
-| --- | ---: | --- | ---: | ---: | ---: |
-| 1080p30, 1 sample (no blur), PNG-MOV | 60 | 1920 px wide | 273 | 3.19 fps | 15.8 MB |
-| 1080p30 alpha, 3 subframes (render.py default), ProRes 4444 | 60 | 1920 px wide | 545 | 1.71 fps | 14.9 MB |
-| 1080p29.97, 3 subframes, PNG-MOV | 60 | 1920 px wide | 954 | 1 fps | 15.9 MB |
-| 4K25 (device scale 2), 4 subframes + post-capture camera | pending | | | | |
+Where the time goes:
+- Every subframe is a full PNG screenshot that Chromium encodes and the host decodes. Opaque frames with full-frame gradients compress worse than mostly-empty transparent frames, so they cost more per subframe (923 vs 551 ms with 3 subframes).
+- At 4K, the post-capture camera resample runs in JavaScript on every subframe.
+- None of this is optimised yet. Possible steps: a worker pool and parallel frame ranges, off-screen paint buffers instead of PNG, the camera in a worker or native code, and GPU rendering as an option. Your Windows PC (Ryzen 7 3800XT) should be considerably faster than this container, but that needs measuring.
 
 ## Findings during Phase 0
 1. **Background traffic:** Electron reaches out to Google's component updater by default. The host switches it, and all other background networking, off; a test proves no connection is made.
@@ -176,7 +179,7 @@ The PR #7 run is replayed in `tests/unit/production/ledger.test.ts`: second Gene
 ## Not done yet / limitations
 - **Fidelity with the editor's real work is unmeasured.** That needs the reference files below. Byte-identical results on synthetic scenes and Linux don't carry over automatically to their fonts, effects, Windows text rendering or GPU.
 - **Windows:** the render host, the escape suite, process-tree cleanup and the benchmarks have not run on Windows yet.
-- **Speed:** CPU only (software rendering), one renderer per job. Capture goes through PNG encode/decode. The post-capture camera runs in JavaScript (about 1–2 s per 4K subframe). Faster paths (a worker pool, off-screen paint buffers, GPU rendering as an option) can come once fidelity is settled.
+- **Speed:** CPU only (software rendering), one renderer per job. Capture goes through PNG encode/decode. The post-capture camera runs in JavaScript (a 4K frame with 4 subframes takes about 7 s on the test container). Faster paths (a worker pool, off-screen paint buffers, GPU rendering as an option) can come once fidelity is settled.
 - **Post-capture camera:** the SaaS kit's exact resampling kernel and camera API are unknown (`render_ms.py` and `core.js` weren't provided). The prototype uses Catmull-Rom; the adapter will be mapped to the real `camSet` once the kit is available.
 - **Not implemented:** person mattes, source-frame extraction (`prep`), the white-matte variant, post-grade filters, combined files with audio, and parallel chunks.
 - **UI:** no UI yet, and no Claude calls. Scenes are fixtures standing in for Claude output.
