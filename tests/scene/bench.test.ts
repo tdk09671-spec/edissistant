@@ -42,7 +42,10 @@ describe('benchmarks and repeatability', () => {
         width = res.info.outputWidth;
         timings.push({ wallMs, frameMs: res.frameMs.reduce((a, b) => a + b, 0) / res.frameMs.length });
         const pick = [0, Math.floor(frames / 2), frames - 1];
-        hashes.push((await decodeFrames(TOOLS.ffmpeg!, out, pick, res.info.outputWidth, res.info.outputHeight)).map(sha));
+        // One frame at a time: the decoder's output buffer is capped (three 4K RGBA frames exceed it).
+        const h: string[] = [];
+        for (const f of pick) h.push(sha((await decodeFrames(TOOLS.ffmpeg!, out, [f], res.info.outputWidth, res.info.outputHeight))[0]));
+        hashes.push(h);
       }
       expect(hashes[1], `${r.name}: second render identical`).toEqual(hashes[0]);
       rows.push({
