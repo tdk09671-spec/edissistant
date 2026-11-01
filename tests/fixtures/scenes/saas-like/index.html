@@ -1,0 +1,53 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- Synthetic stand-in for a scene-registry page (absolute timeline, several scenes, post-capture
+     camera, canvas particles at device scale). Not a client style and not the Motion Seq kit. -->
+<style>
+@font-face{font-family:'Brand Display';src:url('../fonts/InterDisplay-ExtraBold.otf') format('opentype');font-weight:800}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;overflow:hidden;background:#000}
+.scene{position:absolute;inset:0;display:none}
+.glow{position:absolute;inset:0;background:radial-gradient(60% 70% at 85% 100%,rgba(218,252,110,.22),rgba(0,0,0,0) 70%)}
+.card{position:absolute;left:560px;top:330px;width:800px;height:420px;border-radius:28px;background:#181818;border:1px solid rgba(255,255,255,.07);box-shadow:0 50px 140px rgba(0,0,0,.55)}
+.title{position:absolute;left:64px;top:70px;font:800 96px/0.95 'Brand Display';letter-spacing:-.04em;color:#f7f7f2}
+.label{position:absolute;left:64px;top:300px;font:800 24px 'Brand Display';letter-spacing:.12em;color:#dafc6e}
+#marker{position:absolute;left:597px;top:120px;width:6px;height:120px;background:#fff}
+canvas{position:absolute;left:0;top:0;width:1920px;height:1080px}
+#tc{position:absolute;left:0;top:0;width:4px;height:4px;z-index:10}
+</style></head><body>
+<div class="scene" id="A"><div class="glow"></div><canvas id="parts"></canvas></div>
+<div class="scene" id="B"><div class="glow"></div><div class="card"><div class="title">Agents at work</div><div class="label">STORAGE · SSD</div></div><div id="marker"></div></div>
+<div id="tc"></div>
+<script>
+const ALPHA = new URLSearchParams(location.search).get('alpha') === '1';
+if (ALPHA) { document.documentElement.style.background = 'transparent'; document.body.style.background = 'transparent'; document.querySelectorAll('.glow').forEach((g) => g.remove()); }
+const bez = (x1, y1, x2, y2) => (x) => { // cubic-bezier easing, solved by bisection (deterministic)
+  let lo = 0, hi = 1, t = x; for (let i = 0; i < 40; i++) { const cx = 3 * x1 * t * (1 - t) ** 2 + 3 * x2 * t * t * (1 - t) + t ** 3; if (cx < x) lo = t; else hi = t; t = (lo + hi) / 2; }
+  return 3 * y1 * t * (1 - t) ** 2 + 3 * y2 * t * t * (1 - t) + t ** 3; };
+const GLIDE = bez(0.2, 0.7, 0.2, 1);
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+window.SCENES = [];
+let camera = { scale: 1 };
+function camSet(s, originX = 960, originY = 540) { camera = { scale: s, originX, originY }; } // applied after capture, never as CSS
+function scene(id, t0, t1, build) { const el = document.getElementById(id); window.SCENES.push({ id, t0, t1, el, update: build(el) }); }
+// Scene A: 300 particles on a canvas (backing store at device scale).
+scene('A', 0, 2, (el) => {
+  const c = el.querySelector('canvas'); const dpr = window.devicePixelRatio || 1; c.width = 1920 * dpr; c.height = 1080 * dpr;
+  const g = c.getContext('2d'); g.scale(dpr, dpr);
+  const P = Array.from({ length: 300 }, (_, i) => ({ x: (i * 97) % 1920, y: (i * 53) % 1080, vx: 40 + ((i * 31) % 160), r: 2 + (i % 5) }));
+  return (t) => { g.clearRect(0, 0, 1920, 1080); g.fillStyle = '#dafc6e';
+    for (const p of P) { g.beginPath(); g.arc((p.x + p.vx * t) % 1920, p.y, p.r, 0, Math.PI * 2); g.fill(); } camSet(1); };
+});
+// Scene B: a card glides in; a slow constant-speed push (post-capture camera); a static marker for jitter checks.
+scene('B', 2, 4.4, (el) => {
+  const card = el.querySelector('.card');
+  return (t) => { const k = GLIDE(clamp(t / 0.7)); card.style.opacity = clamp(t / 0.2); card.style.transform = `translateY(${(1 - k) * 60}px)`; card.style.filter = k < 0.999 ? `blur(${((1 - k) * 12).toFixed(2)}px)` : 'none';
+    camSet(1 + 0.05 * (t / 2.4)); };
+});
+const tc = document.getElementById('tc');
+window.renderAt = (T) => {
+  const v = Math.round(T * 100000); tc.style.background = `rgb(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255})`;
+  for (const s of window.SCENES) { const on = T >= s.t0 && T < s.t1 + 1e-9; s.el.style.display = on ? 'block' : 'none'; if (on) s.update(T - s.t0); }
+};
+window.camAt = () => camera;
+window.renderAt(0);
+</script></body></html>

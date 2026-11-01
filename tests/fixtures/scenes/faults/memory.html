@@ -1,0 +1,5 @@
+<!doctype html><html><body style="margin:0;background:#000"><script>
+// Allocates until something stops it: the memory limit must end the job cleanly.
+const hoard = [];
+window.SCENE = { dur: 1, render(t) { if (t >= 0.2) { for (;;) hoard.push(new Array(1e6).fill(Math.random())); } } };
+</script></body></html>

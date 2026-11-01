@@ -1,0 +1,64 @@
+<!doctype html><html><head><meta charset="utf-8">
+<!-- Synthetic stand-in for a Claude-written per-line scene (window.SCENE.render(t)). Not a client style. -->
+<style>
+@font-face{font-family:'Brand Display';src:url('../fonts/InterDisplay-ExtraBold.otf') format('opentype');font-weight:800}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1920px;height:1080px;overflow:hidden}
+body{font-family:'Brand Display',sans-serif;-webkit-font-smoothing:antialiased;background:#0b0b0a}
+#stage{position:absolute;inset:0;overflow:hidden}
+.bg{position:absolute;inset:0;background:radial-gradient(120% 90% at 50% 55%,#151513 0%,#0a0a09 60%,#050505 100%)}
+.head{position:absolute;left:0;right:0;top:330px;text-align:center;font-weight:800;font-size:150px;letter-spacing:-.05em;line-height:.9;color:#f7f7f2;white-space:nowrap}
+.w{display:inline-block}
+.key{color:#fcff7b}
+#count{position:absolute;left:0;right:0;top:560px;text-align:center;font-weight:800;font-size:110px;letter-spacing:-.04em;color:#fcff7b;font-feature-settings:'tnum' 1}
+#bar{position:absolute;left:0;top:780px;width:40px;height:40px;background:#ffffff}
+.cap{position:absolute;left:0;right:0;top:884px;text-align:center;white-space:nowrap;font-weight:800;font-size:64px;letter-spacing:-.04em;color:#f7f7f2}
+#tc{position:absolute;left:0;top:0;width:4px;height:4px}
+</style></head><body><div id="stage">
+<div class="head"><span class="w">No</span> <span class="w key">capital</span> <span class="w">left</span></div>
+<div id="count">0</div>
+<div id="bar"></div>
+<div id="tc"></div>
+</div>
+<script>
+const Q = new URLSearchParams(location.search);
+const ALPHA = Q.get('alpha') === '1', NOCAP = Q.get('nocap') === '1', FPS = Number(Q.get('fps') || 30);
+if (ALPHA) { document.documentElement.style.background = 'transparent'; document.body.style.background = 'transparent'; }
+else document.getElementById('stage').insertAdjacentHTML('afterbegin', '<div class="bg"></div>');
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const P = (t, a, b) => clamp((t - a) / (b - a));
+const outExpo = (x) => (x >= 1 ? 1 : 1 - Math.pow(2, -10 * x));
+const frameQ = (t) => Math.floor(t * FPS + 1e-4) / FPS;   // counters change only on whole frames
+function set(el, { o = 1, y = 0, blur = 0 } = {}) {
+  el.style.opacity = o; el.style.transform = `translateY(${y}px)`; el.style.filter = blur > 0.05 ? `blur(${blur.toFixed(2)}px)` : 'none';
+}
+function reveal(el, t, t0, dur = 0.7) { const k = outExpo(P(t, t0, t0 + dur)); set(el, { o: clamp(k * 1.4), y: (1 - k) * 46, blur: (1 - k) * 14 }); }
+// Word timings (seconds from the scene start), as a local transcription would supply them.
+const WORDS = [['No', 0.2], ['capital', 0.5], ['left', 0.8]];
+const CAPTION = [[['There', 0.15], ['is', 0.35], ['no', 0.5], ['capital', 0.65, true]], [['left', 1.2], ['anywhere', 1.4, true]]];
+const heads = [...document.querySelectorAll('.head .w')];
+const pages = NOCAP ? [] : CAPTION.map((p) => {
+  const d = document.createElement('div'); d.className = 'cap';
+  d.innerHTML = p.map((w) => `<span class="w" style="${w[2] ? 'color:#fcff7b' : ''}">${w[0]}</span>`).join(' ');
+  document.getElementById('stage').appendChild(d); return { d, ws: [...d.querySelectorAll('.w')], p };
+});
+const tc = document.getElementById('tc'), bar = document.getElementById('bar'), count = document.getElementById('count');
+window.SCENE = {
+  dur: 2,
+  render(t) {
+    const v = Math.round(t * 100000);
+    tc.style.background = `rgb(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255})`;
+    heads.forEach((w, i) => reveal(w, t, WORDS[i][1] - 0.08));
+    count.textContent = Math.floor(frameQ(t) * 4321).toLocaleString('en-US');
+    bar.style.transform = `translateX(${100 + t * 800}px)`;   // 800 px/s: visibly blurred
+    pages.forEach((pg, i) => {
+      const start = pg.p[0][1] - 0.06, next = i + 1 < pages.length ? pages[i + 1].p[0][1] - 0.06 : 1e9;
+      const out = P(t, next - 0.14, next + 0.08);
+      if (t < start - 0.05 || out >= 1) { pg.d.style.opacity = 0; return; }
+      set(pg.d, { o: 1 - out, y: -22 * out, blur: 8 * out });
+      pg.ws.forEach((w, j) => { const k = outExpo(P(t, pg.p[j][1] - 0.05, pg.p[j][1] + 0.37)); set(w, { o: clamp(k * 1.4), y: (1 - k) * 26, blur: (1 - k) * 10 }); });
+    });
+  },
+};
+window.SCENE.render(0);
+</script></body></html>

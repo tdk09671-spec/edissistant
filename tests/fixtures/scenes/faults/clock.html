@@ -1,0 +1,17 @@
+<!doctype html><html><body style="margin:0;background:#000">
+<div id="tc" style="position:absolute;left:0;top:0;width:4px;height:4px"></div>
+<div id="box" style="position:absolute;left:100px;top:100px;width:100px;height:100px;background:#fff;animation:slide 1s linear forwards"></div>
+<style>@keyframes slide{from{transform:translateX(0)}to{transform:translateX(1000px)}}</style>
+<script>
+// Uses every clock a scene might use. With the virtual clock, all of them follow scene time, and timer
+// callbacks run in a fixed order when a frame is drawn.
+const log = [];
+setTimeout(() => log.push(`timeout100@${performance.now()}`), 100);
+const iv = setInterval(() => log.push(`interval250@${performance.now()}`), 250);
+requestAnimationFrame((ts) => log.push(`raf@${ts}`));
+requestIdleCallback(() => log.push('idle'));
+window.SCENE = { dur: 1, render(t) {
+  const v = Math.round(t * 100000); document.getElementById('tc').style.background = `rgb(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255})`;
+  window.__probe = { t, now: performance.now(), date: Date.now(), rand: Math.random(), log: log.slice(), anim: document.getAnimations().map((a) => a.currentTime) };
+} };
+</script></body></html>
