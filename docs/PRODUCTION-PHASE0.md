@@ -92,6 +92,7 @@ The host's stdin is closed, and its stdout/stderr carry diagnostics only (see [R
 - **Network evidence is scoped.** On Linux: no request reached the listener or proxy, and no UDP socket owned by the user in the test's network namespace. On Windows the listener checks are portable, but the UDP-socket and process-executable checks are not; they need `Get-NetUDPEndpoint` and Process Explorer (checklist). This is not a claim of complete network isolation under every OS configuration.
 - **The WebRTC removal is a page-level layer.** It is backed by the proxy-only UDP policy, the disabled mDNS feature, dead DNS and the request filter, but it is not a Chromium build flag. A renderer exploit could reach the network stack the same way any Chromium bug could.
 - **The Windows named pipe** uses libuv's default security descriptor. Other local users may be able to open it, but they cannot pass the mutual proof, and only the first authenticated connection is accepted. Restricting the pipe's ACL to the current user would need native code; it is not done.
+- **Windows start-time comparison:** the process list (CIM `CreationDate`) and the kill check (`Process.StartTime`) are both converted to UTC milliseconds. A local-time ambiguity, such as the repeated hour when daylight saving ends, could make them disagree. The error is on the safe side: the process is reported as `skipped: reused` and not killed.
 - **Helpers spawned between snapshots:** if the host crashes, a helper started after the last snapshot is not in the owned list. Chromium helpers exit when the browser process goes away, so this is expected to be harmless, but it is untested on Windows.
 
 ## Render host IPC (Windows blockers B1 and B2)
@@ -413,7 +414,7 @@ Run on the **shipped host, unmodified**: no harness workarounds, no local patche
    - a restricted token;
    - not running with `--no-sandbox`.
 7. **Network and hardening (Windows-only evidence):**
-   - During the security suite, run `Get-NetUDPEndpoint | Where-Object { (Get-Process -Id $_.OwningProcess).Name -eq 'electron' }`. Expected: no rows, with port 5353 (mDNS) in particular absent.
+   - During the security suite, run `Get-NetUDPEndpoint | Where-Object { (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).Name -eq 'electron' }`. Expected: no rows, with port 5353 (mDNS) in particular absent.
    - Confirm no mail client, Settings window or dialer opened during the security suite.
    - Run the GPU-mode security test on the GPU PC: `navigator.gpu` must be undefined.
 8. Check that `%TEMP%\edissistant-scene-*` folders disappear after the tests. `edissistant-scene-state` may remain; it holds only the partial registry.
